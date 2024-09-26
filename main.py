@@ -20,9 +20,9 @@ def get():
 @rt("/submit")
 def post(d: dict):
     try:
-        node_id = d["node_id"]
+        node_id = int(d["node_id"])
     except ValueError:
-        return "Node id should be numbers only"
+        return "Please enter a valid node id"
 
     receipts = requests.get(
         f"https://alpha.minting.tfchain.grid.tf/api/v1/node/{node_id}"
