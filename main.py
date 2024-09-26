@@ -1,4 +1,5 @@
 from datetime import datetime
+import urllib.parse
 import requests
 from fasthtml.common import *
 import grid3.network
@@ -20,7 +21,7 @@ def get(id_input: int = None, select: str = "Node ID"):
             hx_get="/submit",
             hx_target="#result",
             hx_trigger="submit",
-            # hx_push_url="true",
+            hx_indicator="#loading",
         )(
             Div(
                 Div(
@@ -48,15 +49,27 @@ def get(id_input: int = None, select: str = "Node ID"):
             ),
             # CheckboxX(id="fixups", label="Show fixups"),
         ),
-        Br(),
+        # Br(),
+        Div("Loading...", id="loading", cls="htmx-indicator"),
         Div(result, id="result"),
+        Style(
+            """
+            .htmx-indicator{
+            opacity:0;
+            transition: opacity 500ms ease-in;
+            }
+            .htmx-request.htmx-indicator{
+            opacity:1;
+            }
+            """
+        ),
     )
 
 
 @rt("/submit")
 def get(id_input: int, select: str):
     if select == "Node ID":
-        return render_receipts(id_input)
+        response = render_receipts(id_input)
     elif select == "Farm ID":
         nodes = mainnet.graphql.nodes(["nodeID"], farmID_eq=id_input)
         node_ids = sorted([node["nodeID"] for node in nodes])
@@ -64,7 +77,8 @@ def get(id_input: int, select: str):
         for node in node_ids:
             response.append(H2("Node " + str(node)))
             response.append(render_receipts(node))
-    return response
+    params = urllib.parse.urlencode({"id_input": id_input, "select": select})
+    return response, HtmxResponseHeaders(push_url="/?" + params)
 
 
 def render_receipts(node_id):
