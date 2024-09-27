@@ -25,7 +25,7 @@ def get(req, select: str, id_input: int):
         node_ids = sorted([node["nodeID"] for node in nodes])
         results = []
         for node in node_ids:
-            results.append(H2("Node " + str(node)))
+            results.append(H2(f"Node {node}"))
             results.append(render_receipts(node))
 
     has_result = False
@@ -82,6 +82,7 @@ def render_details(rhash):
 
     receipt = receipts[rhash]
     return [
+        H2(f"Node {receipt['node_id']}"),
         Table(receipt_header(), render_receipt(rhash, receipt, False)),
         render_receipt_row2(receipt),
     ]
