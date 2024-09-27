@@ -9,36 +9,68 @@ app, rt = fast_app(live=True)
 
 
 @rt("/")
-def get(id_input: int = None, select: str = "Node ID"):
-    if id_input:
-        result = render_receipts(id_input)
-    else:
-        result = None
+def get():
+    return render_main()
 
+
+@rt("/{select}/{id_input}")
+def get(req, select: str, id_input: int):
+    if select == "node":
+        results = [render_receipts(id_input)]
+    elif select == "farm":
+        nodes = mainnet.graphql.nodes(["nodeID"], farmID_eq=id_input)
+        node_ids = sorted([node["nodeID"] for node in nodes])
+        results = []
+        for node in node_ids:
+            result.append(H2("Node " + str(node)))
+            result.append(render_receipts(node))
+
+    has_result = False
+    for result in results:
+        if result:
+            has_result = True
+
+    if not has_result:
+        results = "No receipts found."
+
+    if "hx-request" in req.headers:
+        return results
+    else:
+        return render_main(select, id_input, results)
+
+
+def render_main(select="node", id_input=None, result=""):
     return Titled(
         "Fetch Minting Receipts",
         Form(
-            hx_get="/submit",
             hx_target="#result",
             hx_trigger="submit",
-            hx_indicator="#loading",
+            onsubmit="document.getElementById('result').innerHTML = 'Loading...'",
+            oninput="""
+                        const sel = this.elements.select.value;
+                        const id = this.elements.id_input.value;
+                        const path = '/' + sel + '/' + id;
+                        this.setAttribute('hx-get', path);
+                        this.setAttribute('hx-push-url', path);
+                        htmx.process(this);
+                        """,
         )(
             Div(
                 Div(
                     Input(
-                        type="int",
+                        type="number",
                         id="id_input",
                         placeholder=42,
                         value=id_input,
+                        required="true",
                     ),
                     style="display: inline-block",
                 ),
                 Div(
                     Select(
-                        Option("Node ID"),
-                        Option("Farm ID"),
+                        Option("Node ID", value="node", selected=select == "node"),
+                        Option("Farm ID", value="farm", selected=select == "farm"),
                         id="select",
-                        value=select,
                     ),
                     style="display: inline-block",
                 ),
@@ -49,36 +81,9 @@ def get(id_input: int = None, select: str = "Node ID"):
             ),
             # CheckboxX(id="fixups", label="Show fixups"),
         ),
-        # Br(),
-        Div("Loading...", id="loading", cls="htmx-indicator"),
-        Div(result, id="result"),
-        Style(
-            """
-            .htmx-indicator{
-            opacity:0;
-            transition: opacity 500ms ease-in;
-            }
-            .htmx-request.htmx-indicator{
-            opacity:1;
-            }
-            """
-        ),
+        Br(),
+        Div(*result, id="result"),
     )
-
-
-@rt("/submit")
-def get(id_input: int, select: str):
-    if select == "Node ID":
-        response = render_receipts(id_input)
-    elif select == "Farm ID":
-        nodes = mainnet.graphql.nodes(["nodeID"], farmID_eq=id_input)
-        node_ids = sorted([node["nodeID"] for node in nodes])
-        response = []
-        for node in node_ids:
-            response.append(H2("Node " + str(node)))
-            response.append(render_receipts(node))
-    params = urllib.parse.urlencode({"id_input": id_input, "select": select})
-    return response, HtmxResponseHeaders(push_url="/?" + params)
 
 
 def render_receipts(node_id):
@@ -90,9 +95,13 @@ def render_receipts(node_id):
     else:
         return "Please enter a valid node id"
 
-    receipts = requests.get(
-        f"https://alpha.minting.tfchain.grid.tf/api/v1/node/{node_id}"
-    ).json()
+    try:
+        receipts = requests.get(
+            f"https://alpha.minting.tfchain.grid.tf/api/v1/node/{node_id}"
+        ).json()
+    except requests.exceptions.JSONDecodeError:
+        return None
+
     header = Tr(
         Th(Strong("Period Start")),
         Th(Strong("Period End")),
