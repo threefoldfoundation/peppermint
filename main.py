@@ -83,8 +83,11 @@ def render_details(rhash):
     receipt = receipts[rhash]
     return [
         H2(f"Node {receipt['node_id']}"),
-        Table(receipt_header(), render_receipt(rhash, receipt, False)),
-        render_receipt_row2(receipt),
+        Table(
+            receipt_header(),
+            render_receipt(rhash, receipt, False),
+            *render_receipt_row2(receipt),
+        ),
     ]
 
 
@@ -193,12 +196,12 @@ def render_receipt(rhash, r, details=True):
 
 
 def render_receipt_row2(r):
-    return Table(
+    return [
         Tr(
-            Th(Strong("CU")),
-            Th(Strong("SU")),
-            Th(Strong("NU")),
-            Th(Strong("Certification")),
+            Th(Br(), Strong("CU")),
+            Th(Br(), Strong("SU")),
+            Th(Br(), Strong("NU")),
+            Th(Br(), Strong("Certification")),
         ),
         Tr(
             Td(r["cloud_units"]["cu"]),
@@ -206,7 +209,7 @@ def render_receipt_row2(r):
             Td(r["cloud_units"]["nu"]),
             Td(r["node_type"]),
         ),
-    )
+    ]
 
 
 def receipt_header():
