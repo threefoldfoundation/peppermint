@@ -7,6 +7,9 @@ import grid3.network
 mainnet = grid3.network.GridNetwork()
 app, rt = fast_app(live=True)
 
+# Keep a cash of known receipts, keyed by hash. Ideally we'd also keep record of which node ids have been queried and when, to know if there's a possibility of more recipts we didn't cache yet
+receipts = {}
+
 
 @rt("/")
 def get():
@@ -22,8 +25,8 @@ def get(req, select: str, id_input: int):
         node_ids = sorted([node["nodeID"] for node in nodes])
         results = []
         for node in node_ids:
-            result.append(H2("Node " + str(node)))
-            result.append(render_receipts(node))
+            results.append(H2("Node " + str(node)))
+            results.append(render_receipts(node))
 
     has_result = False
     for result in results:
@@ -39,10 +42,57 @@ def get(req, select: str, id_input: int):
         return render_main(select, id_input, results)
 
 
+@rt("/node/{node_id}/{rhash}")
+def get(node_id: int, rhash: str):
+    details = render_details(rhash)
+
+    # Details can be an error which is a string. Also the receipt might not be cached before we call render_details above. This whole thing is kinda ugly... TODO: refactor the caching and error handling
+    if type(details) is not str:
+        if receipts[rhash]["node_id"] != node_id:
+            details = "Hash doesn't match node id"
+
+    return render_main(id_input=node_id, result=details)
+
+
+@rt("/details")
+def get(rhash: str):
+    return render_details(rhash)
+
+
+def process_receipt(receipt):
+    # Flatten receipts so the type is an attribute
+    if "Minting" in receipt:
+        r = receipt["Minting"]
+        r["type"] = "Minting"
+    elif "Fixup" in receipt:
+        r = receipt["Fixup"]
+        r["type"] = "Fixup"
+    return r
+
+
+def render_details(rhash):
+    if rhash not in receipts:
+        response = requests.get(
+            f"https://alpha.minting.tfchain.grid.tf/api/v1/receipt/{rhash}"
+        )
+        if not response.ok:
+            return "Hash not found"
+        else:
+            receipts[rhash] = process_receipt(response.json())
+
+    receipt = receipts[rhash]
+    return [
+        Table(receipt_header(), render_receipt(rhash, receipt, False)),
+        render_receipt_row2(receipt),
+    ]
+
+
 def render_main(select="node", id_input=None, result=""):
     return Titled(
         "Fetch Minting Receipts",
         Form(
+            hx_get=f"/{select}/{id_input}",
+            hx_push_url=f"/{select}/{id_input}",
             hx_target="#result",
             hx_trigger="submit",
             onsubmit="document.getElementById('result').innerHTML = 'Loading...'",
@@ -83,6 +133,14 @@ def render_main(select="node", id_input=None, result=""):
         ),
         Br(),
         Div(*result, id="result"),
+        Style(
+            """
+            table tr:hover td {
+            background: #efefef;
+            cursor: pointer;
+            }
+            """
+        ),
     )
 
 
@@ -96,32 +154,67 @@ def render_receipts(node_id):
         return "Please enter a valid node id"
 
     try:
-        receipts = requests.get(
+        response = requests.get(
             f"https://alpha.minting.tfchain.grid.tf/api/v1/node/{node_id}"
         ).json()
     except requests.exceptions.JSONDecodeError:
         return None
 
-    header = Tr(
+    rows = [receipt_header()]
+    for receipt in response:
+        rhash, receipt = receipt["hash"], receipt["receipt"]
+        receipt = process_receipt(receipt)
+        if rhash not in receipts:
+            receipts[rhash] = receipt
+        if receipt["type"] == "Minting":
+            rows.append(render_receipt(rhash, receipt))
+    return Table(*rows)
+
+
+def render_receipt(rhash, r, details=True):
+    uptime = round(r["measured_uptime"] / (30.45 * 24 * 60 * 60) * 100, 2)
+    if details:
+        row = Tr(
+            hx_get="/details",
+            hx_target="#result",
+            hx_trigger="click",
+            hx_vals={"rhash": rhash},
+            hx_push_url=f"/node/{r['node_id']}/{rhash}",
+        )
+    else:
+        row = Tr()
+    return row(
+        Td(datetime.fromtimestamp(r["period"]["start"]).date()),
+        Td(datetime.fromtimestamp(r["period"]["end"]).date()),
+        Td(f"{uptime}%"),
+        Td(r["reward"]["tft"] / 1e7),
+    )
+
+
+def render_receipt_row2(r):
+    return Table(
+        Tr(
+            Th(Strong("CU")),
+            Th(Strong("SU")),
+            Th(Strong("NU")),
+            Th(Strong("Certification")),
+        ),
+        Tr(
+            Td(r["cloud_units"]["cu"]),
+            Td(r["cloud_units"]["su"]),
+            Td(r["cloud_units"]["nu"]),
+            Td(r["node_type"]),
+        ),
+    )
+
+
+def receipt_header():
+    return Tr(
         Th(Strong("Period Start")),
         Th(Strong("Period End")),
         Th(Strong("Uptime")),
         Th(Strong("TFT Minted")),
     )
-    rows = [header]
-    for r in receipts:
-        if "Minting" in r["receipt"]:
-            r = r["receipt"]["Minting"]
-            uptime = round(r["measured_uptime"] / (30.45 * 24 * 60 * 60) * 100, 2)
-            rows.append(
-                Tr(
-                    Td(datetime.fromtimestamp(r["period"]["start"]).date()),
-                    Td(datetime.fromtimestamp(r["period"]["end"]).date()),
-                    Td(f"{uptime}%"),
-                    Td(r["reward"]["tft"] / 1e7),
-                )
-            )
-    return Table(*rows)
 
 
 serve()
