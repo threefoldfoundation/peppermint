@@ -4,7 +4,6 @@
 git clone https://github.com/scottyeager/peppermint.git
 
 cd peppermint
-mkdir venv
 python3 -m venv venv
 source venv/bin/activate
 pip install python-fasthtml requests grid3
