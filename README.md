@@ -12,3 +12,7 @@ python3 main.py
 ```
 
 A link to visit the dev server will appear in your terminal.
+
+## Contributing
+
+Code style is [Black](https://github.com/psf/black).
