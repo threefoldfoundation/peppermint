@@ -1,13 +1,15 @@
-from datetime import datetime
+from datetime import datetime, timedelta
+import calendar
 import urllib.parse
 import requests
 from fasthtml.common import *
 import grid3.network
+from collections import defaultdict
 
 mainnet = grid3.network.GridNetwork()
 app, rt = fast_app(live=True)
 
-# Keep a cache of known receipts, keyed by hash. Ideally we'd also keep record of which node ids have been queried and when, to know if there's a possibility of more receipts we didn't cache yet
+# Keep a cache of known receipts, keyed by hash.
 receipts = {}
 
 @rt("/")
@@ -28,8 +30,49 @@ def get(req, select: str, id_input: int, filter_option: str = None):
                 results.append(H2(f"Node {node}"))
                 results.append(render_receipts(node))
         elif filter_option == "periods":
-            # Implement period filtering logic here
-            results.append(H2("Period filtering not implemented yet"))
+            grouped_receipts = group_receipts_by_period(node_ids)
+            sorted_periods = sorted(grouped_receipts.keys(), key=lambda x: int(x.split('_')[1]), reverse=True)
+            
+            for i, period_key in enumerate(sorted_periods):
+                period_receipts = grouped_receipts[period_key]
+                period_end = datetime.fromtimestamp(int(period_key.split('_')[1]))
+                
+                # Determine prevalent month
+                month_counts = defaultdict(int)
+                for receipt_info in period_receipts:
+                    receipt = receipt_info["receipt"]
+                    start_date = datetime.fromtimestamp(receipt["period"]["start"])
+                    end_date = datetime.fromtimestamp(receipt["period"]["end"])
+                    days = (end_date - start_date).days + 1
+                    for day in range(days):
+                        current_date = start_date + timedelta(days=day)
+                        month_counts[current_date.month] += 1
+                prevalent_month = max(month_counts, key=month_counts.get)
+                
+                period_month = calendar.month_name[prevalent_month]
+                period_year = period_end.year
+                results.append(H2(f"Period {len(sorted_periods) - i} ({period_month} {period_year})"))
+                rows = [receipt_header()]
+                
+                # Create a dictionary to store the latest receipt for each node
+                latest_node_receipts = {}
+                for receipt_info in period_receipts:
+                    node_id = receipt_info["node_id"]
+                    if node_id not in latest_node_receipts or receipt_info["receipt"]["period"]["end"] > latest_node_receipts[node_id]["receipt"]["period"]["end"]:
+                        latest_node_receipts[node_id] = receipt_info
+
+                # Add a row for each node, only if it has valid data
+                for node_id in node_ids:
+                    if node_id in latest_node_receipts:
+                        receipt_info = latest_node_receipts[node_id]
+                        row = render_receipt(receipt_info["hash"], receipt_info["receipt"], node_id)
+                        if row:  # Only add the row if it's not None
+                            rows.append(row)
+                
+                if len(rows) > 1:  # Only add the table if there are rows besides the header
+                    results.append(Table(*rows))
+                else:
+                    results.append(P("No valid data for this period"))
         else:
             # Default behavior when no filter is selected
             for node in node_ids:
@@ -53,7 +96,6 @@ def get(req, select: str, id_input: int, filter_option: str = None):
 def get(node_id: int, rhash: str):
     details = render_details(rhash)
 
-    # Details can be an error which is a string. Also the receipt might not be cached before we call render_details above. This whole thing is kinda ugly... TODO: refactor the caching and error handling
     if type(details) is not str:
         if receipts[rhash]["node_id"] != node_id:
             details = "Hash doesn't match node id"
@@ -75,6 +117,7 @@ def process_receipt(receipt):
     return r
 
 def render_details(rhash):
+    global receipts
     if rhash not in receipts:
         response = requests.get(
             f"https://alpha.minting.tfchain.grid.tf/api/v1/receipt/{rhash}"
@@ -89,7 +132,7 @@ def render_details(rhash):
         H2(f"Node {receipt['node_id']} Details"),
         Table(
             receipt_header(),
-            render_receipt(rhash, receipt, False),
+            render_receipt(rhash, receipt, receipt['node_id'], False),
             *render_receipt_row2(receipt),
         ),
     ]
@@ -167,7 +210,6 @@ def render_main(select="node", id_input=None, result="", filter_option=None):
                     style="display: inline-block",
                 ),
             ),
-            # CheckboxX(id="fixups", label="Show fixups"),
         ),
         Br(),
         Div(*result, id="result"),
@@ -192,6 +234,7 @@ def render_main(select="node", id_input=None, result="", filter_option=None):
     )
 
 def render_receipts(node_id):
+    global receipts
     if node_id:
         try:
             node_id = int(node_id)
@@ -209,16 +252,57 @@ def render_receipts(node_id):
 
     rows = [receipt_header()]
     for receipt in response:
-        rhash, receipt = receipt["hash"], receipt["receipt"]
-        receipt = process_receipt(receipt)
+        rhash, receipt_data = receipt["hash"], receipt["receipt"]
+        receipt_data = process_receipt(receipt_data)
         if rhash not in receipts:
-            receipts[rhash] = receipt
-        if receipt["type"] == "Minting":
-            rows.append(render_receipt(rhash, receipt))
-    return Table(*rows)
+            receipts[rhash] = receipt_data
+        if receipt_data["type"] == "Minting":
+            row = render_receipt(rhash, receipt_data, node_id)
+            if row:  # Only add the row if it's not None
+                rows.append(row)
+    return Table(*rows) if len(rows) > 1 else P("No valid data for this node")
 
-def render_receipt(rhash, r, details=True):
+def group_receipts_by_period(node_ids):
+    global receipts
+    periods = {}
+
+    for node_id in node_ids:
+        try:
+            response = requests.get(
+                f"https://alpha.minting.tfchain.grid.tf/api/v1/node/{node_id}"
+            ).json()
+        except requests.exceptions.JSONDecodeError:
+            continue
+
+        for receipt in response:
+            rhash, receipt_data = receipt["hash"], receipt["receipt"]
+            receipt_data = process_receipt(receipt_data)
+            if receipt_data["type"] == "Minting":
+                end_time = receipt_data["period"]["end"]
+                
+                period_key = f"period_{end_time}"
+                if period_key not in periods:
+                    periods[period_key] = []
+                
+                if rhash not in receipts:
+                    receipts[rhash] = receipt_data
+
+                periods[period_key].append({
+                    "hash": rhash,
+                    "receipt": receipt_data,
+                    "node_id": node_id
+                })
+
+    return periods
+
+def render_receipt(rhash, r, node_id, details=True):
     uptime = round(r["measured_uptime"] / (30.45 * 24 * 60 * 60) * 100, 2)
+    tft_minted = r["reward"]["tft"] / 1e7
+
+    # Check if both uptime and TFT minted are 0.0, if so, return None
+    if uptime == 0.0 and tft_minted == 0.0:
+        return None
+
     if details:
         row = Tr(
             hx_get="/details",
@@ -230,10 +314,11 @@ def render_receipt(rhash, r, details=True):
     else:
         row = Tr()
     return row(
+        Td(node_id),
         Td(datetime.fromtimestamp(r["period"]["start"]).date()),
         Td(datetime.fromtimestamp(r["period"]["end"]).date()),
-        Td(f"{uptime}%"),
-        Td(r["reward"]["tft"] / 1e7),
+        Td(f"{uptime:.2f}%"),
+        Td(f"{tft_minted:.7f}"),
     )
 
 def render_receipt_row2(r):
@@ -254,6 +339,7 @@ def render_receipt_row2(r):
 
 def receipt_header():
     return Tr(
+        Th(Strong("Node ID")),
         Th(Strong("Period Start")),
         Th(Strong("Period End")),
         Th(Strong("Uptime")),
