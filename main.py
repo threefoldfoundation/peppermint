@@ -82,7 +82,7 @@ def render_details(rhash):
 
     receipt = receipts[rhash]
     return [
-        H2(f"Node {receipt['node_id']}"),
+        H2(f"Node {receipt['node_id']} Details"),
         Table(
             receipt_header(),
             render_receipt(rhash, receipt, False),
@@ -101,12 +101,22 @@ def render_main(select="node", id_input=None, result=""):
             hx_trigger="submit",
             onsubmit="document.getElementById('result').innerHTML = 'Loading...'",
             oninput="""
-                        const sel = this.elements.select.value;
-                        const id = this.elements.id_input.value;
-                        const path = '/' + sel + '/' + id;
-                        this.setAttribute('hx-get', path);
-                        this.setAttribute('hx-push-url', path);
-                        htmx.process(this);
+                    const sel = this.elements.select.value;
+                    const id = this.elements.id_input.value;
+                    const path = '/' + sel + '/' + id;
+                    this.setAttribute('hx-get', path);
+                    this.setAttribute('hx-push-url', path);
+                    htmx.process(this);
+                    // Setting `value` and `selected` help make the form data persistent when using the browser back button.
+                    this.elements.id_input.setAttribute('value', id)
+                    for (child of this.elements.select.children){
+                        if (child.value == sel) {
+                            child.setAttribute('selected', 'selected')
+                        } else {
+                            child.removeAttribute('selected')
+                        }
+                    }
+                    this.elements.id_input.getAttribute('value')
                         """,
         )(
             Div(
