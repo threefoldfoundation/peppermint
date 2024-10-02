@@ -1,11 +1,18 @@
+import sqlite3, concurrent.futures
 from datetime import datetime
-import urllib.parse
+from typing import Tuple
+
 import requests
 from fasthtml.common import *
-import grid3.network
+import grid3.network, grid3.minting
+
+import minting_lite
+
+RECEIPTS_URL = "https://alpha.minting.tfchain.grid.tf/api/v1/"
 
 mainnet = grid3.network.GridNetwork()
 app, rt = fast_app(live=True)
+
 
 # Keep a cash of known receipts, keyed by hash. Ideally we'd also keep record of which node ids have been queried and when, to know if there's a possibility of more recipts we didn't cache yet
 receipts = {}
@@ -19,14 +26,15 @@ def get():
 @rt("/{select}/{id_input}")
 def get(req, select: str, id_input: int):
     if select == "node":
-        results = [render_receipts(id_input)]
+        results = [render_receipts(fetch_node_receipts(id_input))]
+
     elif select == "farm":
-        nodes = mainnet.graphql.nodes(["nodeID"], farmID_eq=id_input)
-        node_ids = sorted([node["nodeID"] for node in nodes])
+        farm_receipts = fetch_farm_receipts(id_input)
         results = []
-        for node in node_ids:
-            results.append(H2(f"Node {node}"))
-            results.append(render_receipts(node))
+        for node, receipts in farm_receipts:
+            if receipts:
+                results.append(H2(f"Node {node}"))
+                results.append(render_receipts(receipts))
 
     has_result = False
     for result in results:
@@ -59,15 +67,53 @@ def get(rhash: str):
     return render_details(rhash)
 
 
-def process_receipt(receipt):
-    # Flatten receipts so the type is an attribute
+def fetch_farm_receipts(farm_id: int) -> List[Tuple[int, list | None]]:
+    nodes = mainnet.graphql.nodes(["nodeID"], farmID_eq=farm_id)
+    node_ids = [node["nodeID"] for node in nodes]
+    pool = concurrent.futures.ThreadPoolExecutor(max_workers=20)
+    responses = []
+    for node_id in node_ids:
+        url = RECEIPTS_URL + f"node/{node_id}"
+        responses.append((node_id, pool.submit(requests.get, url)))
+
+    processed_responses = []
+    for node_id, response in responses:
+        try:
+            response = response.result().json()
+            response = process_node_receipts(response)
+        except requests.exceptions.JSONDecodeError:
+            response = None
+
+        processed_responses.append((node_id, response))
+
+    # Sorts by node id
+    return sorted(processed_responses)
+
+
+def fetch_node_receipts(node_id):
+    try:
+        response = requests.get(RECEIPTS_URL + f"node/{node_id}").json()
+        response = process_node_receipts(response)
+    except requests.exceptions.JSONDecodeError:
+        response = None
+
+    return response
+
+
+def process_receipt(rhash, receipt):
+    # Flatten receipts so the type is an attribute, and also include the hash
     if "Minting" in receipt:
         r = receipt["Minting"]
         r["type"] = "Minting"
     elif "Fixup" in receipt:
         r = receipt["Fixup"]
         r["type"] = "Fixup"
+    r["hash"] = rhash
     return r
+
+
+def process_node_receipts(items):
+    return [process_receipt(item["hash"], item["receipt"]) for item in items]
 
 
 def render_details(rhash):
@@ -78,16 +124,19 @@ def render_details(rhash):
         if not response.ok:
             return "Hash not found"
         else:
-            receipts[rhash] = process_receipt(response.json())
+            receipts[rhash] = process_receipt(rhash, response.json())
 
     receipt = receipts[rhash]
     return [
         H2(f"Node {receipt['node_id']} Details"),
         Table(
             receipt_header(),
-            render_receipt(rhash, receipt, False),
+            render_receipt(receipt, False),
             *render_receipt_row2(receipt),
         ),
+        Br(),
+        H3("Uptime Events"),
+        mintinglite(receipt),
     ]
 
 
@@ -158,42 +207,23 @@ def render_main(select="node", id_input=None, result=""):
     )
 
 
-def render_receipts(node_id):
-    if node_id:
-        try:
-            node_id = int(node_id)
-        except ValueError:
-            return "Please enter a valid node id"
-    else:
-        return "Please enter a valid node id"
-
-    try:
-        response = requests.get(
-            f"https://alpha.minting.tfchain.grid.tf/api/v1/node/{node_id}"
-        ).json()
-    except requests.exceptions.JSONDecodeError:
-        return None
-
+def render_receipts(receipts):
     rows = [receipt_header()]
-    for receipt in response:
-        rhash, receipt = receipt["hash"], receipt["receipt"]
-        receipt = process_receipt(receipt)
-        if rhash not in receipts:
-            receipts[rhash] = receipt
+    for receipt in receipts:
         if receipt["type"] == "Minting":
-            rows.append(render_receipt(rhash, receipt))
+            rows.append(render_receipt(receipt))
     return Table(*rows)
 
 
-def render_receipt(rhash, r, details=True):
+def render_receipt(r, details=True):
     uptime = round(r["measured_uptime"] / (30.45 * 24 * 60 * 60) * 100, 2)
     if details:
         row = Tr(
             hx_get="/details",
             hx_target="#result",
             hx_trigger="click",
-            hx_vals={"rhash": rhash},
-            hx_push_url=f"/node/{r['node_id']}/{rhash}",
+            hx_vals={"rhash": r["hash"]},
+            hx_push_url=f"/node/{r['node_id']}/{r['hash']}",
         )
     else:
         row = Tr()
@@ -229,6 +259,53 @@ def receipt_header():
         Th(Strong("Uptime")),
         Th(Strong("TFT Minted")),
     )
+
+
+def mintinglite(receipt):
+    con = sqlite3.connect("tfchain.db")
+    # Check if our db contains all events for the period in question
+    wiggle = 12  # Two blocks
+    node_id = receipt["node_id"]
+    has_start = con.execute(
+        "SELECT 1 FROM PowerState WHERE node_id=? AND timestamp>=?  AND timestamp<=?",
+        [
+            node_id,
+            (receipt["period"]["start"] - wiggle),
+            (receipt["period"]["start"] + wiggle),
+        ],
+    ).fetchone()
+
+    has_end = con.execute(
+        "SELECT 1 FROM PowerState WHERE node_id=? AND timestamp>=?  AND timestamp<=?",
+        [
+            node_id,
+            (receipt["period"]["end"] - wiggle),
+            (receipt["period"]["end"] + wiggle),
+        ],
+    ).fetchone()
+
+    if not has_start and has_end:
+        return None
+
+    period = grid3.minting.Period(receipt["period"]["start"] + wiggle)
+    node = minting_lite.check_node(con, node_id, period, False)
+    header = Tr(
+        *[
+            Th(Strong(label))
+            for label in [
+                "Date",
+                "Timestamp",
+                "Uptime credited",
+                "Elapsed time",
+                "Downtime",
+                "Note",
+            ]
+        ]
+    )
+    rows = [header]
+    for e in node.events:
+        rows.append(Tr(*[Th(item) for item in e]))
+    return Table(*rows)
 
 
 serve()
