@@ -18,6 +18,7 @@ app, rt = fast_app(live=True)
 # Keep a cache of known receipts, keyed by hash. Ideally we'd also keep record of which node ids have been queried and when, to know if there's a possibility of more recipts we didn't cache yet
 receipts = {}
 
+
 @rt("/")
 def get(select: str = "node", id_input: int = None):
     if not id_input:
@@ -136,7 +137,9 @@ def render_details(rhash):
             receipts[rhash] = process_receipt(rhash, response.json())
 
     receipt = receipts[rhash]
-    return [
+    details = mintinglite(receipt)
+
+    response = [
         H2(f"Node {receipt['node_id']} Details"),
         Table(
             receipt_header(),
@@ -145,8 +148,14 @@ def render_details(rhash):
         ),
         Br(),
         H3("Uptime Events"),
-        mintinglite(receipt),
     ]
+
+    if details:
+        response.append(details)
+    else:
+        response.append("Data not available for this period")
+
+    return response
 
 
 def render_main(select="node", id_input=None, result="", loading=False):
@@ -232,6 +241,7 @@ def render_receipt(r, details=True):
             hx_target="#result",
             hx_trigger="click",
             hx_push_url="true",
+            hx_swap="show:top",
         )
     else:
         row = Tr()
@@ -283,16 +293,17 @@ def mintinglite(receipt):
         ],
     ).fetchone()
 
-    has_end = con.execute(
-        "SELECT 1 FROM PowerState WHERE node_id=? AND timestamp>=?  AND timestamp<=?",
-        [
-            node_id,
-            (receipt["period"]["end"] - wiggle),
-            (receipt["period"]["end"] + wiggle),
-        ],
-    ).fetchone()
+    # has_end = con.execute(
+    #     "SELECT 1 FROM PowerState WHERE node_id=? AND timestamp>=?  AND timestamp<=?",
+    #     [
+    #         node_id,
+    #         (receipt["period"]["end"] - wiggle),
+    #         (receipt["period"]["end"] + wiggle),
+    #     ],
+    # ).fetchone()
 
-    if not has_start and has_end:
+    # Generally we won't have any partial periods, except for the ongoing period, due to default behavior of the minting data ingester. So this is a sufficient check that there's some data to show
+    if not has_start:
         return None
 
     period = grid3.minting.Period(receipt["period"]["start"] + wiggle)
