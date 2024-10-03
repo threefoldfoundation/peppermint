@@ -14,13 +14,23 @@ mainnet = grid3.network.GridNetwork()
 app, rt = fast_app(live=True)
 
 
-# Keep a cash of known receipts, keyed by hash. Ideally we'd also keep record of which node ids have been queried and when, to know if there's a possibility of more recipts we didn't cache yet
+# Keep a cache of known receipts, keyed by hash. Ideally we'd also keep record of which node ids have been queried and when, to know if there's a possibility of more recipts we didn't cache yet
 receipts = {}
 
 
 @rt("/")
-def get():
-    return render_main()
+def get(select: str = "node", id_input: int = None):
+    if not id_input:
+        return render_main(select)
+    else:
+        page = render_main(select, id_input, loading=True)
+        headers = HtmxResponseHeaders(push_url=f"/{select}/{id_input}")
+        return page, headers
+
+
+@rt("/{select}/")
+def get(select: str):
+    return render_main(select)
 
 
 @rt("/{select}/{id_input}")
@@ -44,10 +54,7 @@ def get(req, select: str, id_input: int):
     if not has_result:
         results = "No receipts found."
 
-    if "hx-request" in req.headers:
-        return results
-    else:
-        return render_main(select, id_input, results)
+    return render_main(select, id_input, results)
 
 
 @rt("/node/{node_id}/{rhash}")
@@ -140,70 +147,69 @@ def render_details(rhash):
     ]
 
 
-def render_main(select="node", id_input=None, result=""):
-    return Titled(
-        "Fetch Minting Receipts",
-        Form(
-            hx_get=f"/{select}/{id_input}",
-            hx_push_url=f"/{select}/{id_input}",
-            hx_target="#result",
-            hx_trigger="submit",
-            onsubmit="document.getElementById('result').innerHTML = 'Loading...'",
-            oninput="""
-                    const sel = this.elements.select.value;
-                    const id = this.elements.id_input.value;
-                    const path = '/' + sel + '/' + id;
-                    this.setAttribute('hx-get', path);
-                    this.setAttribute('hx-push-url', path);
-                    htmx.process(this);
-                    // Setting `value` and `selected` help make the form data persistent when using the browser back button.
-                    this.elements.id_input.setAttribute('value', id)
-                    for (child of this.elements.select.children){
-                        if (child.value == sel) {
-                            child.setAttribute('selected', 'selected')
-                        } else {
-                            child.removeAttribute('selected')
-                        }
-                    }
-                    this.elements.id_input.getAttribute('value')
-                        """,
-        )(
-            Div(
+def render_main(select="node", id_input=None, result="", loading=False):
+    # If the user hit the /node or /farm paths, we want to set the drop down
+    # but clear the url since state on page can diverge
+    if not id_input:
+        onload = "history.replaceState(null, '', '/')"
+    else:
+        onload = ""
+
+    # Lazy load results and display loading message
+    if loading:
+        result = [
+            P(
+                hx_get=f"/{select}/{id_input}",
+                hx_target="body",
+                hx_trigger="load",
+            )("Loading...")
+        ]
+
+    return Body(onload=onload)(
+        Titled(
+            "Fetch Minting Receipts",
+            Form(
+                hx_get="/",
+                hx_target="body",
+                hx_trigger="submit",
+            )(
                 Div(
-                    Input(
-                        type="number",
-                        id="id_input",
-                        placeholder=42,
-                        value=id_input,
-                        required="true",
+                    Div(
+                        Input(
+                            type="number",
+                            id="id_input",
+                            placeholder=42,
+                            value=id_input,
+                            required="true",
+                        ),
+                        style="display: inline-block",
                     ),
-                    style="display: inline-block",
-                ),
-                Div(
-                    Select(
-                        Option("Node ID", value="node", selected=select == "node"),
-                        Option("Farm ID", value="farm", selected=select == "farm"),
-                        id="select",
+                    Div(
+                        Select(
+                            Option("Node ID", value="node", selected=select == "node"),
+                            Option("Farm ID", value="farm", selected=select == "farm"),
+                            id="select",
+                        ),
+                        style="display: inline-block",
                     ),
-                    style="display: inline-block",
+                    Div(
+                        Button("Go", type="submit"),
+                        style="display: inline-block",
+                    ),
                 ),
-                Div(
-                    Button("Go", type="submit"),
-                    style="display: inline-block",
-                ),
+                # CheckboxX(id="fixups", label="Show fixups"),
             ),
-            # CheckboxX(id="fixups", label="Show fixups"),
-        ),
-        Br(),
-        Div(*result, id="result"),
-        Style(
-            """
+            Br(),
+            Div(*result, id="result"),
+            Style(
+                """
             table tr:hover td {
             background: #efefef;
             cursor: pointer;
             }
             """
-        ),
+            ),
+        )
     )
 
 
