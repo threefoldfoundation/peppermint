@@ -1,4 +1,4 @@
-import sqlite3, concurrent.futures
+import sqlite3, concurrent.futures, threading
 from datetime import datetime
 from typing import Tuple
 
@@ -11,12 +11,12 @@ import minting_lite
 RECEIPTS_URL = "https://alpha.minting.tfchain.grid.tf/api/v1/"
 
 mainnet = grid3.network.GridNetwork()
+# We can run into some trouble with multiple threads trying to use gql at the same time. Bit primitive, but we just lock it for now
+gql_lock = threading.Lock()
 app, rt = fast_app(live=True)
-
 
 # Keep a cache of known receipts, keyed by hash. Ideally we'd also keep record of which node ids have been queried and when, to know if there's a possibility of more recipts we didn't cache yet
 receipts = {}
-
 
 @rt("/")
 def get(select: str = "node", id_input: int = None):
@@ -54,11 +54,14 @@ def get(req, select: str, id_input: int):
     if not has_result:
         results = "No receipts found."
 
-    return render_main(select, id_input, results)
+    if "hx-request" in req.headers:
+        return results
+    else:
+        return render_main(select, id_input, results)
 
 
 @rt("/node/{node_id}/{rhash}")
-def get(node_id: int, rhash: str):
+def get(req, node_id: int, rhash: str):
     details = render_details(rhash)
 
     # Details can be an error which is a string. Also the receipt might not be cached before we call render_details above. This whole thing is kinda ugly... TODO: refactor the caching and error handling
@@ -66,16 +69,15 @@ def get(node_id: int, rhash: str):
         if receipts[rhash]["node_id"] != node_id:
             details = "Hash doesn't match node id"
 
-    return render_main(id_input=node_id, result=details)
-
-
-@rt("/details")
-def get(rhash: str):
-    return render_details(rhash)
+    if "hx-request" in req.headers:
+        return details
+    else:
+        return render_main(id_input=node_id, result=details)
 
 
 def fetch_farm_receipts(farm_id: int) -> List[Tuple[int, list | None]]:
-    nodes = mainnet.graphql.nodes(["nodeID"], farmID_eq=farm_id)
+    with gql_lock:
+        nodes = mainnet.graphql.nodes(["nodeID"], farmID_eq=farm_id)
     node_ids = [node["nodeID"] for node in nodes]
     pool = concurrent.futures.ThreadPoolExecutor(max_workers=20)
     responses = []
@@ -160,7 +162,8 @@ def render_main(select="node", id_input=None, result="", loading=False):
         result = [
             P(
                 hx_get=f"/{select}/{id_input}",
-                hx_target="body",
+                # hx_target="body",
+                hx_swap="outerHTML",
                 hx_trigger="load",
             )("Loading...")
         ]
@@ -225,11 +228,10 @@ def render_receipt(r, details=True):
     uptime = round(r["measured_uptime"] / (30.45 * 24 * 60 * 60) * 100, 2)
     if details:
         row = Tr(
-            hx_get="/details",
+            hx_get=f"/node/{r['node_id']}/{r['hash']}",
             hx_target="#result",
             hx_trigger="click",
-            hx_vals={"rhash": r["hash"]},
-            hx_push_url=f"/node/{r['node_id']}/{r['hash']}",
+            hx_push_url="true",
         )
     else:
         row = Tr()
