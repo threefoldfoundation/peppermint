@@ -209,7 +209,7 @@ def render_main(select="node", id_input=None, result="", loading=False):
                 H1(title),
                 Div(style="display:flex; flex-direction:column; margin-left:auto")(
                     Div(style="align-self:center")("Join the:"),
-                    Div(LightLink("Light side"), " | ", DarkLink("Dark side"))
+                    Div(LightLink("Light side"), " | ", DarkLink("Dark side")),
                 ),
             ),
             LightDarkScript(),
@@ -219,21 +219,21 @@ def render_main(select="node", id_input=None, result="", loading=False):
                 hx_trigger="submit",
             )(
                 Fieldset(role="group", style="width:325px")(
-                        Input(
-                            type="number",
-                            id="id_input",
-                            placeholder=42,
-                            value=id_input,
-                            required="true",
-                            style="width: 175px",
-                        ),
-                        Select(
-                            Option("Node ID", value="node", selected=select == "node"),
-                            Option("Farm ID", value="farm", selected=select == "farm"),
-                            id="select",
-                            style="width: 100px",
-                        ),
-                        Button("Go", type="submit"),
+                    Input(
+                        type="number",
+                        id="id_input",
+                        placeholder=42,
+                        value=id_input,
+                        required="true",
+                        style="width: 150px",
+                    ),
+                    Select(
+                        Option("Node ID", value="node", selected=select == "node"),
+                        Option("Farm ID", value="farm", selected=select == "farm"),
+                        id="select",
+                        style="width: 125px",
+                    ),
+                    Button("Go", type="submit"),
                 ),
                 # CheckboxX(id="fixups", label="Show fixups"),
             ),
@@ -272,6 +272,7 @@ def render_minting_events(node):
 
 
 def render_receipts(receipts):
+    receipts = reversed(sorted(receipts, key=lambda x: x["period"]["start"]))
     rows = [receipt_header()]
     for receipt in receipts:
         if receipt["type"] == "Minting":
@@ -327,7 +328,7 @@ def receipt_header():
 
 def mintinglite(receipt):
     # For testing without db file present
-    if not os.path.exists('tfchain.db'):
+    if not os.path.exists("tfchain.db"):
         return None
 
     con = sqlite3.connect("tfchain.db")
