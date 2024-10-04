@@ -6,6 +6,7 @@ import requests
 from fasthtml.common import *
 import grid3.network, grid3.minting
 
+from lightdark import LightDarkScript, LightLink, DarkLink
 import minting_lite
 
 RECEIPTS_URL = "https://alpha.minting.tfchain.grid.tf/api/v1/"
@@ -199,9 +200,18 @@ def render_main(select="node", id_input=None, result="", loading=False):
             )("Loading...")
         ]
 
-    return Body(onload=onload)(
-        Titled(
-            "Fetch Minting Receipts",
+    title = "Fetch Minting Receipts"
+    return Title(title), Body(onload=onload)(
+        # PicoCSS container, for centered view
+        Main(cls="container")(
+            Div(style="display: flex")(
+                H1(title),
+                Div(style="display:flex; flex-direction:column; margin-left:auto")(
+                    Div(style="align-self:center")("Join the:"),
+                    Div(LightLink("Light side"), " | ", DarkLink("Dark side"))
+                ),
+            ),
+            LightDarkScript(),
             Form(
                 hx_get="/",
                 hx_target="body",
