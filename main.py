@@ -1,4 +1,4 @@
-import sqlite3, concurrent.futures, threading
+import sqlite3, concurrent.futures, threading, os
 from datetime import datetime
 from typing import Tuple
 
@@ -9,6 +9,9 @@ import grid3.network, grid3.minting
 import minting_lite
 
 RECEIPTS_URL = "https://alpha.minting.tfchain.grid.tf/api/v1/"
+CSV_DIR = "csvs"
+
+os.makedirs(CSV_DIR, exist_ok=True)
 
 mainnet = grid3.network.GridNetwork()
 # We can run into some trouble with multiple threads trying to use gql at the same time. Bit primitive, but we just lock it for now
@@ -32,6 +35,15 @@ def get(select: str = "node", id_input: int = None):
 @rt("/{select}/")
 def get(select: str):
     return render_main(select)
+
+
+@rt("/csv/{rhash}")
+def get(rhash: str):
+    node = mintinglite(receipts[rhash])
+    filename = f"node{node.id}.csv"
+    path = "csvs/" + filename
+    node.write_csv(path)
+    return FileResponse(path, filename=filename)
 
 
 @rt("/{select}/{id_input}")
@@ -137,7 +149,22 @@ def render_details(rhash):
             receipts[rhash] = process_receipt(rhash, response.json())
 
     receipt = receipts[rhash]
-    details = mintinglite(receipt)
+    node = mintinglite(receipt)
+    heading = H3("Uptime Events")
+    if node:
+        details = [
+            Div(style="display: flex; align-items: baseline;")(
+                heading,
+                A(style="margin-left:auto;", href=f"/csv/{rhash}", download=True)(
+                    "Download CSV"
+                ),
+            ),
+            render_minting_events(node),
+        ]
+    else:
+        details = [
+            "Data not available for this period",
+        ]
 
     response = [
         H2(f"Node {receipt['node_id']} Details"),
@@ -147,13 +174,8 @@ def render_details(rhash):
             *render_receipt_row2(receipt),
         ),
         Br(),
-        H3("Uptime Events"),
+        *details,
     ]
-
-    if details:
-        response.append(details)
-    else:
-        response.append("Data not available for this period")
 
     return response
 
@@ -223,6 +245,26 @@ def render_main(select="node", id_input=None, result="", loading=False):
             ),
         )
     )
+
+
+def render_minting_events(node):
+    header = Tr(
+        *[
+            Th(Strong(label))
+            for label in [
+                "Date",
+                "Timestamp",
+                "Uptime credited",
+                "Elapsed time",
+                "Downtime",
+                "Note",
+            ]
+        ]
+    )
+    rows = [header]
+    for e in node.events:
+        rows.append(Tr(*[Th(item) for item in e]))
+    return Table(*rows)
 
 
 def render_receipts(receipts):
@@ -305,26 +347,10 @@ def mintinglite(receipt):
     # Generally we won't have any partial periods, except for the ongoing period, due to default behavior of the minting data ingester. So this is a sufficient check that there's some data to show
     if not has_start:
         return None
-
-    period = grid3.minting.Period(receipt["period"]["start"] + wiggle)
-    node = minting_lite.check_node(con, node_id, period, False)
-    header = Tr(
-        *[
-            Th(Strong(label))
-            for label in [
-                "Date",
-                "Timestamp",
-                "Uptime credited",
-                "Elapsed time",
-                "Downtime",
-                "Note",
-            ]
-        ]
-    )
-    rows = [header]
-    for e in node.events:
-        rows.append(Tr(*[Th(item) for item in e]))
-    return Table(*rows)
+    else:
+        period = grid3.minting.Period(receipt["period"]["start"] + wiggle)
+        node = minting_lite.check_node(con, node_id, period)
+        return node
 
 
 serve()
