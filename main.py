@@ -164,6 +164,7 @@ def render_details(rhash):
         ]
     else:
         details = [
+            heading,
             "Data not available for this period",
         ]
 
@@ -217,29 +218,22 @@ def render_main(select="node", id_input=None, result="", loading=False):
                 hx_target="body",
                 hx_trigger="submit",
             )(
-                Div(
-                    Div(
+                Fieldset(role="group", style="width:325px")(
                         Input(
                             type="number",
                             id="id_input",
                             placeholder=42,
                             value=id_input,
                             required="true",
+                            style="width: 175px",
                         ),
-                        style="display: inline-block",
-                    ),
-                    Div(
                         Select(
                             Option("Node ID", value="node", selected=select == "node"),
                             Option("Farm ID", value="farm", selected=select == "farm"),
                             id="select",
+                            style="width: 100px",
                         ),
-                        style="display: inline-block",
-                    ),
-                    Div(
                         Button("Go", type="submit"),
-                        style="display: inline-block",
-                    ),
                 ),
                 # CheckboxX(id="fixups", label="Show fixups"),
             ),
@@ -247,7 +241,7 @@ def render_main(select="node", id_input=None, result="", loading=False):
             Div(*result, id="result"),
             Style(
                 """
-            table tr:hover td {
+            table.hover tr:hover td {
             background: #efefef;
             cursor: pointer;
             }
@@ -273,7 +267,7 @@ def render_minting_events(node):
     )
     rows = [header]
     for e in node.events:
-        rows.append(Tr(*[Th(item) for item in e]))
+        rows.append(Tr(*[Td(item) for item in e]))
     return Table(*rows)
 
 
@@ -282,7 +276,7 @@ def render_receipts(receipts):
     for receipt in receipts:
         if receipt["type"] == "Minting":
             rows.append(render_receipt(receipt))
-    return Table(*rows)
+    return Table(*rows, cls="hover")
 
 
 def render_receipt(r, details=True):
