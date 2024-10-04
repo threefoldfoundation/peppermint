@@ -332,6 +332,10 @@ def receipt_header():
 
 
 def mintinglite(receipt):
+    # For testing without db file present
+    if not os.path.exists('tfchain.db'):
+        return None
+
     con = sqlite3.connect("tfchain.db")
     # Check if our db contains all events for the period in question
     wiggle = 12  # Two blocks
