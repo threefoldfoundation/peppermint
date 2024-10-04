@@ -242,7 +242,7 @@ def render_main(select="node", id_input=None, result="", loading=False):
             Style(
                 """
             table.hover tr:hover td {
-            background: #efefef;
+            background: var(--pico-text-selection-color);
             cursor: pointer;
             }
             """
