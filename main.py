@@ -202,52 +202,55 @@ def render_main(select="node", id_input=None, result="", loading=False):
         ]
 
     title = "Fetch Minting Receipts"
-    return Title(title), Body(onload=onload)(
-        # PicoCSS container, for centered view
-        Main(cls="container")(
-            Div(style="display: flex")(
-                H1(title),
-                Div(style="display:flex; flex-direction:column; margin-left:auto")(
-                    Div(style="align-self:center")("Join the:"),
-                    Div(LightLink("Light side"), " | ", DarkLink("Dark side")),
-                ),
-            ),
-            LightDarkScript(),
-            Form(
-                hx_get="/",
-                hx_target="body",
-                hx_trigger="submit",
-            )(
-                Fieldset(role="group", style="width:325px")(
-                    Input(
-                        type="number",
-                        id="id_input",
-                        placeholder=42,
-                        value=id_input,
-                        required="true",
-                        style="width: 150px",
+    return (
+        Title(title),
+        Body(onload=onload)(
+            # PicoCSS container, for centered view
+            Main(cls="container")(
+            Div(id="header-bar", hx_preserve=True, style="display: flex")(
+                    H1(title),
+                    Div(style="display:flex; flex-direction:column; margin-left:auto")(
+                        Div(style="align-self:center")("Join the:"),
+                        Div(LightLink("Light side"), " | ", DarkLink("Dark side")),
+                        LightDarkScript(),
                     ),
-                    Select(
-                        Option("Node ID", value="node", selected=select == "node"),
-                        Option("Farm ID", value="farm", selected=select == "farm"),
-                        id="select",
-                        style="width: 125px",
-                    ),
-                    Button("Go", type="submit"),
                 ),
-                # CheckboxX(id="fixups", label="Show fixups"),
-            ),
-            Br(),
-            Div(*result, id="result"),
-            Style(
-                """
+                Form(
+                    hx_get="/",
+                    hx_target="body",
+                    hx_trigger="submit",
+                )(
+                    Fieldset(role="group", style="width:325px")(
+                        Input(
+                            type="number",
+                            id="id_input",
+                            placeholder=42,
+                            value=id_input,
+                            required="true",
+                            style="width: 150px",
+                        ),
+                        Select(
+                            Option("Node ID", value="node", selected=select == "node"),
+                            Option("Farm ID", value="farm", selected=select == "farm"),
+                            id="select",
+                            style="width: 125px",
+                        ),
+                        Button("Go", type="submit"),
+                    ),
+                    # CheckboxX(id="fixups", label="Show fixups"),
+                ),
+                Br(),
+                Div(*result, id="result"),
+                Style(
+                    """
             table.hover tr:hover td {
             background: var(--pico-text-selection-color);
             cursor: pointer;
             }
             """
-            ),
-        )
+                ),
+            )
+        ),
     )
 
 
