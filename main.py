@@ -4,10 +4,9 @@ from typing import Tuple
 
 import requests
 from fasthtml.common import *
-import grid3.network, grid3.minting
+import grid3.network, grid3.minting.period, grid3.minting.mintingnode
 
 from lightdark import LightDarkScript, LightLink, DarkLink
-import minting_lite
 
 RECEIPTS_URL = "https://alpha.minting.tfchain.grid.tf/api/v1/"
 CSV_DIR = "csvs"
@@ -207,7 +206,7 @@ def render_main(select="node", id_input=None, result="", loading=False):
         Body(onload=onload)(
             # PicoCSS container, for centered view
             Main(cls="container")(
-            Div(id="header-bar", hx_preserve=True, style="display: flex")(
+                Div(id="header-bar", hx_preserve=True, style="display: flex")(
                     H1(title),
                     Div(style="display:flex; flex-direction:column; margin-left:auto")(
                         Div(style="align-self:center")("Join the:"),
@@ -360,8 +359,8 @@ def mintinglite(receipt):
     if not has_start:
         return None
     else:
-        period = grid3.minting.Period(receipt["period"]["start"] + wiggle)
-        node = minting_lite.check_node(con, node_id, period)
+        period = grid3.minting.period.Period(receipt["period"]["start"] + wiggle)
+        node = grid3.minting.mintingnode.check_node(con, node_id, period)
         return node
 
 
