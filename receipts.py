@@ -2,8 +2,10 @@ import os
 import json
 import requests
 import time
+from threading import Lock
 from pathlib import Path
 from typing import List, Dict
+from contextlib import contextmanager
 
 STANDARD_PERIOD_DURATION = 24 * 60 * 60 * (365 * 3 + 366 * 2) // 60
 
@@ -12,6 +14,8 @@ class ReceiptHandler:
     """This is a wrapper for the Alpha Minting API, with caching. Fetched
     receipts are stored to disk and also symlinked into a folder for the node
     which the receipt corresponds to, when fetching at the node level.
+
+    Thread safety is provided at the node level for get_node_receipts and get_receipt only.
     """
 
     def __init__(self, base_url: str = "https://alpha.minting.tfchain.grid.tf/api/v1"):
@@ -23,14 +27,24 @@ class ReceiptHandler:
         self.receipts_dir.mkdir(exist_ok=True)
         self.nodes_dir.mkdir(exist_ok=True)
 
-    def get_receipt(self, receipt_hash: str) -> Dict:
-        """Sometimes we just need a single receipt. We don't bother linking to the node for now."""
-        if receipt := self.get_stored_receipt(receipt_hash):
-            return receipt
-        else:
-            receipt = self.fetch_receipt(receipt_hash)
-            self.save_receipt(receipt)
-            return receipt
+        # To make the caching portion thread safe, we'll use per node locking
+        # with the locks stored in this dict
+        self.locks: Dict[int, Lock] = {}
+        self.one_lock_to_rule_them_all = Lock()
+
+    @contextmanager
+    def lock(self, number: int):
+        with self.one_lock_to_rule_them_all:
+            lock = self.locks.setdefault(number, Lock())
+        try:
+            lock.acquire()
+            yield
+        finally:
+            lock.release()
+            with self.one_lock_to_rule_them_all:
+                # If another thread didn't acquire the lock, deallocate it
+                if not lock.locked():
+                    self.locks.pop(number)
 
     def fetch_receipt(self, receipt_hash: str) -> Dict:
         """Fetch receipt from the API with a given hash."""
@@ -191,18 +205,32 @@ class ReceiptHandler:
         except Exception as e:
             print(f"Error processing node {node_id}: {str(e)}")
 
-    def get_node_receipts(self, node_id: int) -> List[Dict]:
-        """Checks for a timestamp on disk, indicating that receipts were
-        previously fetched and cached. If found, and a new period hasn't
-        elapsed, returns the cached receipts, because it's not possible for a
-        new receipt to exist yet. Otherwise, fetch receipts from the API.
+    def get_receipt(self, receipt_hash: str) -> Dict:
+        """Sometimes we just need a single receipt. We don't bother linking to the node for now."""
+        if receipt := self.get_stored_receipt(receipt_hash):
+            return receipt
+        else:
+            receipt = self.fetch_receipt(receipt_hash)
+            node_id = int(receipt["node_id"])
+            with self.lock(node_id):
+                self.save_receipt(receipt)
+                return receipt
+
+    def has_node_receipts(self, node_id: int) -> bool:
+        """If there's a timestamp on disk from a previous fetch, check if at
+        least one minting period worth of time has elapsed since then. This
+        indicates whether we already have all available receipts for this node.
         """
         timestamp = self.get_stored_timestamp(node_id)
-        print(timestamp)
-        if not timestamp or time.time() > timestamp + STANDARD_PERIOD_DURATION:
-            return self.fetch_and_process_node(node_id)
-        else:
-            return self.get_stored_receipts(node_id)
+        return timestamp and time.time() < timestamp + STANDARD_PERIOD_DURATION
+
+    def get_node_receipts(self, node_id: int) -> List[Dict]:
+        with self.lock(node_id):
+            timestamp = self.get_stored_timestamp(node_id)
+            if not self.has_node_receipts(node_id):
+                return self.fetch_and_process_node(node_id)
+            else:
+                return self.get_stored_receipts(node_id)
 
 
 def main():

@@ -7,6 +7,7 @@ from fasthtml.common import *
 import grid3.network, grid3.minting.period, grid3.minting.mintingnode
 
 from lightdark import LightDarkScript, LightLink, DarkLink
+from receipts import ReceiptHandler
 
 RECEIPTS_URL = "https://alpha.minting.tfchain.grid.tf/api/v1/"
 CSV_DIR = "csvs"
@@ -18,8 +19,7 @@ mainnet = grid3.network.GridNetwork()
 gql_lock = threading.Lock()
 app, rt = fast_app(live=True)
 
-# Keep a cache of known receipts, keyed by hash. Ideally we'd also keep record of which node ids have been queried and when, to know if there's a possibility of more recipts we didn't cache yet
-receipts = {}
+receipt_handler = ReceiptHandler()
 
 
 @rt("/")
@@ -39,7 +39,7 @@ def get(select: str):
 
 @rt("/csv/{rhash}")
 def get(rhash: str):
-    node = mintinglite(receipts[rhash])
+    node = mintinglite(receipt_handler(rhash))
     filename = f"node{node.id}.csv"
     path = "csvs/" + filename
     node.write_csv(path)
@@ -49,7 +49,7 @@ def get(rhash: str):
 @rt("/{select}/{id_input}")
 def get(req, select: str, id_input: int):
     if select == "node":
-        results = [render_receipts(fetch_node_receipts(id_input))]
+        results = [render_receipts(receipt_handler.get_node_receipts(id_input))]
 
     elif select == "farm":
         farm_receipts = fetch_farm_receipts(id_input)
@@ -79,7 +79,7 @@ def get(req, node_id: int, rhash: str):
 
     # Details can be an error which is a string. Also the receipt might not be cached before we call render_details above. This whole thing is kinda ugly... TODO: refactor the caching and error handling
     if type(details) is not str:
-        if receipts[rhash]["node_id"] != node_id:
+        if receipt_handler.get_receipt(rhash)["node_id"] != node_id:
             details = "Hash doesn't match node id"
 
     if "hx-request" in req.headers:
@@ -91,64 +91,25 @@ def get(req, node_id: int, rhash: str):
 def fetch_farm_receipts(farm_id: int) -> List[Tuple[int, list | None]]:
     with gql_lock:
         nodes = mainnet.graphql.nodes(["nodeID"], farmID_eq=farm_id)
+
     node_ids = [node["nodeID"] for node in nodes]
-    pool = concurrent.futures.ThreadPoolExecutor(max_workers=20)
-    responses = []
-    for node_id in node_ids:
-        url = RECEIPTS_URL + f"node/{node_id}"
-        responses.append((node_id, pool.submit(requests.get, url)))
+    if sum([1 for n in node_ids if not receipt_handler.has_node_receipts(n)]) > 1:
+        pool = concurrent.futures.ThreadPoolExecutor(max_workers=20)
+        receipt_lists = list(pool.map(receipt_handler.get_node_receipts, node_ids))
+    else:
+        receipt_lists = [receipt_handler.get_node_receipts(n) for n in node_ids]
 
     processed_responses = []
-    for node_id, response in responses:
-        try:
-            response = response.result().json()
-            response = process_node_receipts(response)
-        except requests.exceptions.JSONDecodeError:
-            response = None
-
-        processed_responses.append((node_id, response))
+    for receipt_list in receipt_lists:
+        node_id = receipt_list[0]['node_id']
+        processed_responses.append((node_id, receipt_list))
 
     # Sorts by node id
     return sorted(processed_responses)
 
 
-def fetch_node_receipts(node_id):
-    try:
-        response = requests.get(RECEIPTS_URL + f"node/{node_id}").json()
-        response = process_node_receipts(response)
-    except requests.exceptions.JSONDecodeError:
-        response = None
-
-    return response
-
-
-def process_receipt(rhash, receipt):
-    # Flatten receipts so the type is an attribute, and also include the hash
-    if "Minting" in receipt:
-        r = receipt["Minting"]
-        r["type"] = "Minting"
-    elif "Fixup" in receipt:
-        r = receipt["Fixup"]
-        r["type"] = "Fixup"
-    r["hash"] = rhash
-    return r
-
-
-def process_node_receipts(items):
-    return [process_receipt(item["hash"], item["receipt"]) for item in items]
-
-
 def render_details(rhash):
-    if rhash not in receipts:
-        response = requests.get(
-            f"https://alpha.minting.tfchain.grid.tf/api/v1/receipt/{rhash}"
-        )
-        if not response.ok:
-            return "Hash not found"
-        else:
-            receipts[rhash] = process_receipt(rhash, response.json())
-
-    receipt = receipts[rhash]
+    receipt = receipt_handler.get_receipt(rhash)
     node = mintinglite(receipt)
     heading = H3("Uptime Events")
     if node:
