@@ -93,11 +93,13 @@ def fetch_farm_receipts(farm_id: int) -> List[Tuple[int, list | None]]:
         nodes = mainnet.graphql.nodes(["nodeID"], farmID_eq=farm_id)
 
     node_ids = [node["nodeID"] for node in nodes]
-    if sum([1 for n in node_ids if not receipt_handler.has_node_receipts(n)]) > 1:
+
+    # If all or most of the nodes are caught up in the cache, then the thread pool might do more harm than good. But this is nice and simple
+    if len(node_ids) > 1:
         pool = concurrent.futures.ThreadPoolExecutor(max_workers=20)
         receipt_lists = list(pool.map(receipt_handler.get_node_receipts, node_ids))
     else:
-        receipt_lists = [receipt_handler.get_node_receipts(n) for n in node_ids]
+        receipt_lists = [receipt_handler.get_node_receipts(node_ids[0])]
 
     processed_responses = []
     for receipt_list in receipt_lists:
