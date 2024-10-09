@@ -180,7 +180,7 @@ def render_main(select="node", id_input=None, result="", loading=False):
                     hx_target="body",
                     hx_trigger="submit",
                 )(
-                    Fieldset(role="group", style="width:325px")(
+                    Fieldset(role="group", style="width:0px")(
                         Input(
                             type="number",
                             id="id_input",
@@ -193,7 +193,7 @@ def render_main(select="node", id_input=None, result="", loading=False):
                             Option("Node ID", value="node", selected=select == "node"),
                             Option("Farm ID", value="farm", selected=select == "farm"),
                             id="select",
-                            style="width: 125px",
+                            style="width: 150px",
                         ),
                         Button("Go", type="submit"),
                     ),
