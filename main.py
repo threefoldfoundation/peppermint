@@ -39,7 +39,7 @@ def get(select: str):
 
 @rt("/csv/{rhash}")
 def get(rhash: str):
-    node = mintinglite(receipt_handler(rhash))
+    node = mintinglite(receipt_handler.get_receipt(rhash))
     filename = f"node{node.id}.csv"
     path = "csvs/" + filename
     node.write_csv(path)
