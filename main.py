@@ -2,7 +2,6 @@ import sqlite3, concurrent.futures, threading, os
 from datetime import datetime
 from typing import Tuple
 
-import requests
 from fasthtml.common import *
 import grid3.network, grid3.minting.period, grid3.minting.mintingnode
 
@@ -12,10 +11,18 @@ from receipts import ReceiptHandler
 RECEIPTS_URL = "https://alpha.minting.tfchain.grid.tf/api/v1/"
 CSV_DIR = "csvs"
 
+# Technically our notion of when minting periods start and end should be
+# identical to the minting code, but just in case, we use a wiggle factor to
+# smooth out any small deviations
+WIGGLE = 10
+TFT_DIVISOR = 1e7  # Number of decimal places, as used on tfchain
+
+
 os.makedirs(CSV_DIR, exist_ok=True)
 
 mainnet = grid3.network.GridNetwork()
-# We can run into some trouble with multiple threads trying to use gql at the same time. Bit primitive, but we just lock it for now
+# We can run into some trouble with multiple threads trying to use gql at the
+# same time. Bit primitive, but we just lock it for now
 gql_lock = threading.Lock()
 app, rt = fast_app(live=True)
 
@@ -23,12 +30,13 @@ receipt_handler = ReceiptHandler()
 
 
 @rt("/")
-def get(select: str = "node", id_input: int = None):
+def get(select: str = "node", id_input: int = None, sort_by: str = "node"):
+    print("sort_by:", sort_by)
     if not id_input:
         return render_main(select)
     else:
-        page = render_main(select, id_input, loading=True)
-        headers = HtmxResponseHeaders(push_url=f"/{select}/{id_input}")
+        page = render_main(select, id_input, sort_by, loading=True)
+        headers = HtmxResponseHeaders(push_url=make_url(select, id_input, sort_by))
         return page, headers
 
 
@@ -46,31 +54,46 @@ def get(rhash: str):
     return FileResponse(path, filename=filename)
 
 
-@rt("/{select}/{id_input}")
-def get(req, select: str, id_input: int):
-    if select == "node":
-        results = [render_receipts(receipt_handler.get_node_receipts(id_input))]
-
-    elif select == "farm":
-        farm_receipts = fetch_farm_receipts(id_input)
-        results = []
-        for node, receipts in farm_receipts:
-            if receipts:
-                results.append(H2(f"Node {node}"))
-                results.append(render_receipts(receipts))
-
-    has_result = False
-    for result in results:
-        if result:
-            has_result = True
-
-    if not has_result:
+@rt("/node/{node_id}")
+def get(req, node_id: int):
+    results = [render_receipts(receipt_handler.get_node_receipts(node_id))]
+    if not results[0]:
         results = "No receipts found."
 
     if "hx-request" in req.headers:
         return results
     else:
-        return render_main(select, id_input, results)
+        return render_main("node", node_id, results)
+
+
+@rt("/farm/{farm_id}")
+def get(req, farm_id: int, sort_by: str):
+    farm_receipts = fetch_farm_receipts(farm_id)
+    results = []
+    if sort_by == "node":
+        for node, receipts in farm_receipts:
+            if receipts:
+                results.append(H2(f"Node {node}"))
+                results.append(render_receipts(receipts, sort_by))
+    elif sort_by == "period":
+        receipts_by_period = {}
+        for node, receipts in farm_receipts:
+            for receipt in receipts:
+                receipts_by_period.setdefault(
+                    receipt["period"]["start"], []
+                ).append(receipt)
+        for start, receipts in reversed(sorted(receipts_by_period.items())):
+            period = grid3.minting.period.Period(start + WIGGLE)
+            results.append(H2(f"{period.month_name} {period.year}"))
+            results.append(render_receipts(receipts, sort_by))
+
+    if not results:
+        results = "No receipts found."
+
+    if "hx-request" in req.headers:
+        return results
+    else:
+        return render_main("farm", farm_id, sort_by, results)
 
 
 @rt("/node/{node_id}/{rhash}")
@@ -88,6 +111,13 @@ def get(req, node_id: int, rhash: str):
         return render_main(id_input=node_id, result=details)
 
 
+def make_url(select, id_input, sort_by):
+    if select == "node":
+        return f"/{select}/{id_input}"
+    elif select == "farm":
+        return f"/{select}/{id_input}/?sort_by={sort_by}"
+
+
 def fetch_farm_receipts(farm_id: int) -> List[Tuple[int, list | None]]:
     with gql_lock:
         nodes = mainnet.graphql.nodes(["nodeID"], farmID_eq=farm_id)
@@ -103,7 +133,7 @@ def fetch_farm_receipts(farm_id: int) -> List[Tuple[int, list | None]]:
 
     processed_responses = []
     for receipt_list in receipt_lists:
-        node_id = receipt_list[0]['node_id']
+        node_id = receipt_list[0]["node_id"]
         processed_responses.append((node_id, receipt_list))
 
     # Sorts by node id
@@ -133,7 +163,7 @@ def render_details(rhash):
     response = [
         H2(f"Node {receipt['node_id']} Details"),
         Table(
-            receipt_header(),
+            receipt_header_node(),
             render_receipt(receipt, False),
             *render_receipt_row2(receipt),
         ),
@@ -144,7 +174,7 @@ def render_details(rhash):
     return response
 
 
-def render_main(select="node", id_input=None, result="", loading=False):
+def render_main(select="node", id_input=None, sort_by="node", result="", loading=False):
     # If the user hit the /node or /farm paths, we want to set the drop down
     # but clear the url since state on page can diverge
     if not id_input:
@@ -156,7 +186,7 @@ def render_main(select="node", id_input=None, result="", loading=False):
     if loading:
         result = [
             P(
-                hx_get=f"/{select}/{id_input}",
+                hx_get=make_url(select, id_input, sort_by),
                 # hx_target="body",
                 hx_swap="outerHTML",
                 hx_trigger="load",
@@ -182,7 +212,7 @@ def render_main(select="node", id_input=None, result="", loading=False):
                     hx_target="body",
                     hx_trigger="submit",
                 )(
-                    Fieldset(role="group", style="width:0px")(
+                    Fieldset(role="group", style="width: fit-content")(
                         Input(
                             type="number",
                             id="id_input",
@@ -196,8 +226,28 @@ def render_main(select="node", id_input=None, result="", loading=False):
                             Option("Farm ID", value="farm", selected=select == "farm"),
                             id="select",
                             style="width: 150px",
+                            onchange="document.getElementById('sort_by').hidden = this.value != 'farm'",
                         ),
                         Button("Go", type="submit"),
+                    ),
+                    Fieldset(id="sort_by", hidden=select != "farm")(
+                        Legend("Sort by:"),
+                        Input(
+                            type="radio",
+                            id="node",
+                            value="node",
+                            name="sort_by",
+                            checked=sort_by == "node",
+                        ),
+                        Label("Node", fr="node"),
+                        Input(
+                            type="radio",
+                            id="period",
+                            value="period",
+                            name="sort_by",
+                            checked=sort_by == "period",
+                        ),
+                        Label("Period", fr="period"),
                     ),
                     # CheckboxX(id="fixups", label="Show fixups"),
                 ),
@@ -236,16 +286,21 @@ def render_minting_events(node):
     return Table(*rows)
 
 
-def render_receipts(receipts):
-    receipts = reversed(sorted(receipts, key=lambda x: x["period"]["start"]))
-    rows = [receipt_header()]
+def render_receipts(receipts, sort_by="node"):
+    if sort_by == "node":
+        receipts = reversed(sorted(receipts, key=lambda x: x["period"]["start"]))
+        rows = [receipt_header_node()]
+    elif sort_by == "period":
+        receipts = sorted(receipts, key=lambda x: x["node_id"])
+        rows = [receipt_header_period()]
+
     for receipt in receipts:
         if receipt["type"] == "Minting":
-            rows.append(render_receipt(receipt))
+            rows.append(render_receipt(receipt, True, sort_by))
     return Table(*rows, cls="hover")
 
 
-def render_receipt(r, details=True):
+def render_receipt(r, details=True, sort_by="node"):
     uptime = round(r["measured_uptime"] / (30.45 * 24 * 60 * 60) * 100, 2)
     if details:
         row = Tr(
@@ -257,12 +312,22 @@ def render_receipt(r, details=True):
         )
     else:
         row = Tr()
-    return row(
-        Td(datetime.fromtimestamp(r["period"]["start"]).date()),
-        Td(datetime.fromtimestamp(r["period"]["end"]).date()),
+
+    if sort_by == "node":
+        elements = [
+            Td(datetime.fromtimestamp(r["period"]["start"]).date()),
+            Td(datetime.fromtimestamp(r["period"]["end"]).date()),
+        ]
+    if sort_by == "period":
+        elements = [
+            Td(r["node_id"]),
+        ]
+
+    elements += [
         Td(f"{uptime}%"),
-        Td(r["reward"]["tft"] / 1e7),
-    )
+        Td(r["reward"]["tft"] / TFT_DIVISOR),
+    ]
+    return row(*elements)
 
 
 def render_receipt_row2(r):
@@ -282,10 +347,18 @@ def render_receipt_row2(r):
     ]
 
 
-def receipt_header():
+def receipt_header_node():
     return Tr(
         Th(Strong("Period Start")),
         Th(Strong("Period End")),
+        Th(Strong("Uptime")),
+        Th(Strong("TFT Minted")),
+    )
+
+
+def receipt_header_period():
+    return Tr(
+        Th(Strong("Node ID")),
         Th(Strong("Uptime")),
         Th(Strong("TFT Minted")),
     )
@@ -298,14 +371,13 @@ def mintinglite(receipt):
 
     con = sqlite3.connect("tfchain.db")
     # Check if our db contains all events for the period in question
-    wiggle = 12  # Two blocks
     node_id = receipt["node_id"]
     has_start = con.execute(
         "SELECT 1 FROM PowerState WHERE node_id=? AND timestamp>=?  AND timestamp<=?",
         [
             node_id,
-            (receipt["period"]["start"] - wiggle),
-            (receipt["period"]["start"] + wiggle),
+            (receipt["period"]["start"] - WIGGLE),
+            (receipt["period"]["start"] + WIGGLE),
         ],
     ).fetchone()
 
@@ -313,8 +385,8 @@ def mintinglite(receipt):
     #     "SELECT 1 FROM PowerState WHERE node_id=? AND timestamp>=?  AND timestamp<=?",
     #     [
     #         node_id,
-    #         (receipt["period"]["end"] - wiggle),
-    #         (receipt["period"]["end"] + wiggle),
+    #         (receipt["period"]["end"] - WIGGLE),
+    #         (receipt["period"]["end"] + WIGGLE),
     #     ],
     # ).fetchone()
 
@@ -322,7 +394,7 @@ def mintinglite(receipt):
     if not has_start:
         return None
     else:
-        period = grid3.minting.period.Period(receipt["period"]["start"] + wiggle)
+        period = grid3.minting.period.Period(receipt["period"]["start"] + WIGGLE)
         node = grid3.minting.mintingnode.check_node(con, node_id, period)
         return node
 
