@@ -3,7 +3,8 @@ from datetime import datetime
 from typing import Tuple
 
 from fasthtml.common import *
-import grid3.network, grid3.minting.period, grid3.minting.mintingnode
+import grid3.network, grid3.minting.mintingnode
+from grid3.minting.period import Period
 
 from lightdark import LightDarkScript, LightLink, DarkLink
 from receipts import ReceiptHandler
@@ -63,11 +64,11 @@ def get(req, node_id: int):
     if "hx-request" in req.headers:
         return results
     else:
-        return render_main("node", node_id, results)
+        return render_main("node", node_id, result=results)
 
 
 @rt("/farm/{farm_id}")
-def get(req, farm_id: int, sort_by: str):
+def get(req, farm_id: int, sort_by: str = "node"):
     farm_receipts = fetch_farm_receipts(farm_id)
     results = []
     if sort_by == "node":
@@ -75,15 +76,16 @@ def get(req, farm_id: int, sort_by: str):
             if receipts:
                 results.append(H2(f"Node {node}"))
                 results.append(render_receipts(receipts, sort_by))
+
     elif sort_by == "period":
         receipts_by_period = {}
         for node, receipts in farm_receipts:
             for receipt in receipts:
-                receipts_by_period.setdefault(
-                    receipt["period"]["start"], []
-                ).append(receipt)
+                receipts_by_period.setdefault(receipt["period"]["start"], []).append(
+                    receipt
+                )
         for start, receipts in reversed(sorted(receipts_by_period.items())):
-            period = grid3.minting.period.Period(start + WIGGLE)
+            period = Period(start + WIGGLE)
             results.append(H2(f"{period.month_name} {period.year}"))
             results.append(render_receipts(receipts, sort_by))
 
@@ -163,8 +165,8 @@ def render_details(rhash):
     response = [
         H2(f"Node {receipt['node_id']} Details"),
         Table(
-            receipt_header_node(),
-            render_receipt(receipt, False),
+            receipt_header_details(),
+            render_receipt(receipt, True),
             *render_receipt_row2(receipt),
         ),
         Br(),
@@ -290,19 +292,29 @@ def render_receipts(receipts, sort_by="node"):
     if sort_by == "node":
         receipts = reversed(sorted(receipts, key=lambda x: x["period"]["start"]))
         rows = [receipt_header_node()]
+        last_year = None
+        for receipt in receipts:
+            if receipt["type"] == "Minting":
+                period = Period(receipt["period"]["start"] + WIGGLE)
+                receipt["period"]["year"] = period.year
+                receipt["period"]["month_name"] = period.month_name
+                show_year = last_year != period.year
+                rows.append(render_receipt(receipt, False, sort_by, show_year))
+                last_year = period.year
+
     elif sort_by == "period":
         receipts = sorted(receipts, key=lambda x: x["node_id"])
         rows = [receipt_header_period()]
+        for receipt in receipts:
+            if receipt["type"] == "Minting":
+                rows.append(render_receipt(receipt, False, sort_by))
 
-    for receipt in receipts:
-        if receipt["type"] == "Minting":
-            rows.append(render_receipt(receipt, True, sort_by))
     return Table(*rows, cls="hover")
 
 
-def render_receipt(r, details=True, sort_by="node"):
+def render_receipt(r, detail=True, sort_by="node", show_year=True):
     uptime = round(r["measured_uptime"] / (30.45 * 24 * 60 * 60) * 100, 2)
-    if details:
+    if not detail:
         row = Tr(
             hx_get=f"/node/{r['node_id']}/{r['hash']}",
             hx_target="#result",
@@ -314,10 +326,22 @@ def render_receipt(r, details=True, sort_by="node"):
         row = Tr()
 
     if sort_by == "node":
-        elements = [
-            Td(datetime.fromtimestamp(r["period"]["start"]).date()),
-            Td(datetime.fromtimestamp(r["period"]["end"]).date()),
-        ]
+        if detail:
+            elements = [
+                Td(datetime.fromtimestamp(r["period"]["start"]).date()),
+                Td(datetime.fromtimestamp(r["period"]["end"]).date()),
+            ]
+        else:
+            if show_year:
+                elements = [
+                    Td(f"{r['period']['year']}"),
+                    Td(r["period"]["month_name"]),
+                ]
+            else:
+                elements = [
+                    Td(),
+                    Td(r["period"]["month_name"]),
+                ]
     if sort_by == "period":
         elements = [
             Td(r["node_id"]),
@@ -348,6 +372,15 @@ def render_receipt_row2(r):
 
 
 def receipt_header_node():
+    return Tr(
+        Th(Strong("Year")),
+        Th(Strong("Month")),
+        Th(Strong("Uptime")),
+        Th(Strong("TFT Minted")),
+    )
+
+
+def receipt_header_details():
     return Tr(
         Th(Strong("Period Start")),
         Th(Strong("Period End")),
@@ -394,7 +427,7 @@ def mintinglite(receipt):
     if not has_start:
         return None
     else:
-        period = grid3.minting.period.Period(receipt["period"]["start"] + WIGGLE)
+        period = Period(receipt["period"]["start"] + WIGGLE)
         node = grid3.minting.mintingnode.check_node(con, node_id, period)
         return node
 
