@@ -92,8 +92,8 @@ def get(req, farm_id: int, sort_by: str = "node"):
                 receipts_by_period.setdefault(receipt["period"]["end"], []).append(
                     receipt
                 )
-        for start, receipts in reversed(sorted(receipts_by_period.items())):
-            period = Period(start + WIGGLE)
+        for end, receipts in reversed(sorted(receipts_by_period.items())):
+            period = Period(end - WIGGLE)
             results.append(H2(f"{period.month_name} {period.year}"))
             results.append(render_receipts(receipts, sort_by))
 
