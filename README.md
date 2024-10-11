@@ -22,7 +22,7 @@ For production, it's best to disable the websocket based live code reloading and
 Use a `config.py` file to disable live code reloading:
 
 ```
-echo "LIVE_RELOAD = false" > config.py
+echo "LIVE_RELOAD = False" > config.py
 ```
 
 Then run directly with `uvicorn`:
