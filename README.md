@@ -17,7 +17,15 @@ A link to visit the dev server will appear in your terminal.
 
 FastHTML ships with Uvicorn, which is used for the development server when executing `main.py` directly.
 
-For production, it's best to disable the websocket based live code reloading and use a bit more robust configuration. A number of options are discussed [here](https://www.uvicorn.org/deployment/). The simplest is to use the built in process manager:
+For production, it's best to disable the websocket based live code reloading and use a bit more robust configuration. A number of options are discussed [here](https://www.uvicorn.org/deployment/). The simplest is to use the built in process manager.
+
+Use a `config.py` file to disable live code reloading:
+
+```
+echo "LIVE_RELOAD = false" > config.py
+```
+
+Then run directly with `uvicorn`:
 
 ```
 # Source the venv first
