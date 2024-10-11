@@ -8,12 +8,12 @@ from grid3.minting.period import Period
 
 from lightdark import LightDarkScript, LightLink, DarkLink
 from receipts import ReceiptHandler
+
 try:
     from config import LIVE_RELOAD
 except:
     print("Error loading config file, setting live reload to True")
     LIVE_RELOAD = True
-
 
 
 RECEIPTS_URL = "https://alpha.minting.tfchain.grid.tf/api/v1/"
@@ -137,7 +137,7 @@ def fetch_farm_receipts(farm_id: int) -> List[Tuple[int, list | None]]:
         pool = concurrent.futures.ThreadPoolExecutor(max_workers=20)
         receipt_lists = list(pool.map(receipt_handler.get_node_receipts, node_ids))
     else:
-        #TODO: This throws an error if the nodes list is empty. We need to alert the user about the problem
+        # TODO: This throws an error if the nodes list is empty. We need to alert the user about the problem
         receipt_lists = [receipt_handler.get_node_receipts(node_ids[0])]
 
     processed_responses = []
@@ -205,14 +205,14 @@ def render_main(select="node", id_input=None, sort_by="node", result="", loading
     title = "Fetch Minting Receipts"
     return (
         Title(title),
-        Body(onload=onload)(
+        Body(onload=onload, style="height: 100vh;")(
             # PicoCSS container, for centered view
             Main(cls="container")(
                 Div(id="header-bar", hx_preserve=True, style="display: flex")(
                     H1(title),
                     Div(style="display:flex; flex-direction:column; margin-left:auto")(
-                        Div(style="align-self:center")("Join the:"),
-                        Div(LightLink("Light side"), " | ", DarkLink("Dark side")),
+                        Small(style="align-self:center")("Join the:"),
+                        Small(LightLink("Light side"), " | ", DarkLink("Dark side")),
                         LightDarkScript(),
                     ),
                 ),
@@ -270,7 +270,27 @@ def render_main(select="node", id_input=None, sort_by="node", result="", loading
             }
             """
                 ),
-            )
+            ),
+            Footer(
+                cls="container",
+                style="position: sticky; top: 100vh; text-align: center",
+                hidden=bool(id_input),
+            )(
+                Small(
+                    Strong("Peppermint "),
+                    "- ",
+                    Em("ThreeFold minting data with a bit of spice"),
+                    Br(),
+                    "Made with ❤️, FastHTML, htmx, and PicoCSS",
+                    Br(),
+                    "For source code and issues: ",
+                    A(
+                        href="https://github.com/scottyeager/peppermint",
+                        target="_blank",
+                        rel="noopener noreferrer",
+                    )("Github"),
+                ),
+            ),
         ),
     )
 
