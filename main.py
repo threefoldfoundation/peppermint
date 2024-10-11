@@ -87,7 +87,9 @@ def get(req, farm_id: int, sort_by: str = "node"):
         receipts_by_period = {}
         for node, receipts in farm_receipts:
             for receipt in receipts:
-                receipts_by_period.setdefault(receipt["period"]["start"], []).append(
+                # We must use the end here, because the start times on receipts
+                # are scaled to node creation for new nodes
+                receipts_by_period.setdefault(receipt["period"]["end"], []).append(
                     receipt
                 )
         for start, receipts in reversed(sorted(receipts_by_period.items())):
@@ -274,7 +276,8 @@ def render_main(select="node", id_input=None, sort_by="node", result="", loading
             Footer(
                 cls="container",
                 style="position: sticky; top: 100vh; text-align: center",
-                hidden=bool(id_input),
+                # Only show the footer on the "home page"
+                hidden=bool(id_input), 
             )(
                 Small(
                     Strong("Peppermint "),
