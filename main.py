@@ -8,6 +8,12 @@ from grid3.minting.period import Period
 
 from lightdark import LightDarkScript, LightLink, DarkLink
 from receipts import ReceiptHandler
+try:
+    from config import LIVE_RELOAD
+except:
+    LIVE_RELOAD = True
+
+
 
 RECEIPTS_URL = "https://alpha.minting.tfchain.grid.tf/api/v1/"
 CSV_DIR = "csvs"
@@ -25,7 +31,7 @@ mainnet = grid3.network.GridNetwork()
 # We can run into some trouble with multiple threads trying to use gql at the
 # same time. Bit primitive, but we just lock it for now
 gql_lock = threading.Lock()
-app, rt = fast_app(live=True)
+app, rt = fast_app(live=LIVE_RELOAD)
 
 receipt_handler = ReceiptHandler()
 
