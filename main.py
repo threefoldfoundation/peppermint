@@ -383,7 +383,7 @@ def render_receipt(r, detail=True, sort_by="node", show_year=True):
         # Some receipts have uptime figures that are way too large
         elements.append(Td("Data not available"))
 
-    elements.append(Td(r["reward"]["tft"] / TFT_DIVISOR))
+    elements.append(Td(round(r["reward"]["tft"] / TFT_DIVISOR, 2)))
     return row(*elements)
 
 
