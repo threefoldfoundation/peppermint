@@ -32,7 +32,6 @@ receipt_handler = ReceiptHandler()
 
 @rt("/")
 def get(select: str = "node", id_input: int = None, sort_by: str = "node"):
-    print("sort_by:", sort_by)
     if not id_input:
         return render_main(select)
     else:
