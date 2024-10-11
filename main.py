@@ -11,6 +11,7 @@ from receipts import ReceiptHandler
 try:
     from config import LIVE_RELOAD
 except:
+    print("Error loading config file, setting live reload to True")
     LIVE_RELOAD = True
 
 
@@ -122,7 +123,7 @@ def make_url(select, id_input, sort_by):
     if select == "node":
         return f"/{select}/{id_input}"
     elif select == "farm":
-        return f"/{select}/{id_input}/?sort_by={sort_by}"
+        return f"/{select}/{id_input}?sort_by={sort_by}"
 
 
 def fetch_farm_receipts(farm_id: int) -> List[Tuple[int, list | None]]:
@@ -136,6 +137,7 @@ def fetch_farm_receipts(farm_id: int) -> List[Tuple[int, list | None]]:
         pool = concurrent.futures.ThreadPoolExecutor(max_workers=20)
         receipt_lists = list(pool.map(receipt_handler.get_node_receipts, node_ids))
     else:
+        #TODO: This throws an error if the nodes list is empty. We need to alert the user about the problem
         receipt_lists = [receipt_handler.get_node_receipts(node_ids[0])]
 
     processed_responses = []
