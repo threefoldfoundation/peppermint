@@ -7,7 +7,7 @@ import grid3.network, grid3.minting.mintingnode
 from grid3.minting.period import Period
 
 from lightdark import LightDarkScript, LightLink, DarkLink
-from receipts import ReceiptHandler
+from receipts import STANDARD_PERIOD_DURATION, ReceiptHandler, make_period_receipts
 
 try:
     from config import LIVE_RELOAD
@@ -63,9 +63,11 @@ def get(rhash: str):
 
 @rt("/node/{node_id}")
 def get(req, node_id: int):
-    results = [render_receipts(receipt_handler.get_node_receipts(node_id))]
-    if not results[0]:
+    receipts = receipt_handler.get_node_receipts(node_id)
+    if not receipts:
         results = "No receipts found."
+    else:
+        results = [render_receipt_overview(receipts)]
 
     if "hx-request" in req.headers:
         return results
@@ -81,7 +83,7 @@ def get(req, farm_id: int, sort_by: str = "node"):
         for node, receipts in farm_receipts:
             if receipts:
                 results.append(H2(f"Node {node}"))
-                results.append(render_receipts(receipts, sort_by))
+                results.append(render_receipt_overview(receipts, sort_by))
 
     elif sort_by == "period":
         receipts_by_period = {}
@@ -95,7 +97,7 @@ def get(req, farm_id: int, sort_by: str = "node"):
         for end, receipts in reversed(sorted(receipts_by_period.items())):
             period = Period(end - WIGGLE)
             results.append(H2(f"{period.month_name} {period.year}"))
-            results.append(render_receipts(receipts, sort_by))
+            results.append(render_receipt_overview(receipts, sort_by))
 
     if not results:
         results = "No receipts found."
@@ -110,7 +112,7 @@ def get(req, farm_id: int, sort_by: str = "node"):
 def get(req, node_id: int, rhash: str):
     details = render_details(rhash)
 
-    # Details can be an error which is a string. Also the receipt might not be cached before we call render_details above. This whole thing is kinda ugly... TODO: refactor the caching and error handling
+    # Details can be an error which is a string. Also the receipt might not be cached before we call render_details above. This whole thing is kinda ugly... TODO: refactor error handling
     if type(details) is not str:
         if receipt_handler.get_receipt(rhash)["node_id"] != node_id:
             details = "Hash doesn't match node id"
@@ -149,40 +151,6 @@ def fetch_farm_receipts(farm_id: int) -> List[Tuple[int, list | None]]:
 
     # Sorts by node id
     return sorted(processed_responses)
-
-
-def render_details(rhash):
-    receipt = receipt_handler.get_receipt(rhash)
-    node = mintinglite(receipt)
-    heading = H3("Uptime Events")
-    if node:
-        details = [
-            Div(style="display: flex; align-items: baseline;")(
-                heading,
-                A(style="margin-left:auto;", href=f"/csv/{rhash}", download=True)(
-                    "Download CSV"
-                ),
-            ),
-            render_minting_events(node),
-        ]
-    else:
-        details = [
-            heading,
-            "Data not available for this period",
-        ]
-
-    response = [
-        H2(f"Node {receipt['node_id']} Details"),
-        Table(
-            receipt_header_details(),
-            render_receipt(receipt, True),
-            *render_receipt_row2(receipt),
-        ),
-        Br(),
-        *details,
-    ]
-
-    return response
 
 
 def render_main(select="node", id_input=None, sort_by="node", result="", loading=False):
@@ -277,7 +245,7 @@ def render_main(select="node", id_input=None, sort_by="node", result="", loading
                 cls="container",
                 style="position: sticky; top: 100vh; text-align: center",
                 # Only show the footer on the "home page"
-                hidden=bool(id_input), 
+                hidden=bool(id_input),
             )(
                 Small(
                     Strong("Peppermint "),
@@ -298,7 +266,203 @@ def render_main(select="node", id_input=None, sort_by="node", result="", loading
     )
 
 
-def render_minting_events(node):
+def render_receipt_overview(receipts, sort_by="node"):
+    period_receipts = make_period_receipts(receipts)
+    if sort_by == "node":
+        period_receipts = reversed(
+            sorted(period_receipts, key=lambda x: x.period.start)
+        )
+        rows = [receipt_header_node()]
+        last_year = None
+        for receipt in period_receipts:
+            show_year = last_year != receipt.period.year
+            rows.append(render_receipt_row(receipt, sort_by, show_year))
+            last_year = receipt.period.year
+
+    elif sort_by == "period":
+        receipts = sorted(period_receipts, key=lambda x: x.node_id)
+        rows = [receipt_header_period()]
+        for receipt in period_receipts:
+            rows.append(render_receipt_row(receipt, sort_by))
+
+    return Table(*rows, cls="hover")
+
+
+def render_receipt_row(period_receipt, sort_by="node", show_year=True):
+    # The fixup receipt contains the hashes of the original and corrected
+    # receipts, so using its hash here is a convenient way to encode that
+
+    if period_receipt.fixup_receipt:
+        rhash = period_receipt.fixup_receipt["hash"]
+    else:
+        rhash = period_receipt.minted_receipt["hash"]
+
+    # For rendering the details on the overview, we'll use the corrected
+    # receipt if available, since that represents the final state of the node's
+    # minting for the period. Sometimes only the correct_rectip is available,
+    # for whatever reason
+
+    if period_receipt.correct_receipt:
+        r = period_receipt.correct_receipt
+    elif period_receipt.minted_receipt:
+        r = period_receipt.minted_receipt
+    else:
+        # So far I didn't see this one
+        return Tr(Td("Data not available"))
+
+    row = Tr(
+        hx_get=f"/node/{r['node_id']}/{rhash}",
+        hx_target="#result",
+        hx_trigger="click",
+        hx_push_url="true",
+        hx_swap="show:top",
+    )
+
+    if sort_by == "node":
+        if show_year:
+            elements = [
+                Td(f"{period_receipt.period.year}"),
+                Td(period_receipt.period.month_name),
+            ]
+        else:
+            elements = [
+                Td(),
+                Td(period_receipt.period.month_name),
+            ]
+    elif sort_by == "period":
+        elements = [
+            Td(r["node_id"]),
+        ]
+
+    uptime = round(r["measured_uptime"] / STANDARD_PERIOD_DURATION * 100, 2)
+    if uptime <= 100:
+        elements.append(Td(f"{uptime}%"))
+    else:
+        # Some receipts have uptime figures that are way too large
+        elements.append(Td("Data not available"))
+
+    elements.append(Td(round(r["reward"]["tft"] / TFT_DIVISOR, 2)))
+    elements.append(Td("✔️" if period_receipt.fixup_receipt else ""))
+    return row(*elements)
+
+
+def render_details(rhash):
+    receipt = receipt_handler.get_receipt(rhash)
+    response = [H2(f"Node {receipt['node_id']} Details")]
+    if receipt["type"] == "Fixup":
+        minted_receipt = receipt_handler.get_receipt(receipt["minted_receipt"])
+        correct_receipt = receipt_handler.get_receipt(receipt["correct_receipt"])
+
+        # It's possible that either the minted_receipt or the correct_receipt
+        # is missing from the receipt API. In that case, fill in the details we
+        # have from the fixup receipt
+        response.append(H3("Corrected Receipt"))
+        if correct_receipt:
+            response.append(render_receipt_detail(correct_receipt))
+        else:
+            response.append(render_fixup_detail(receipt, "correct"))
+
+        response.append(H3("Original Receipt"))
+        if minted_receipt:
+            response.append(render_receipt_detail(minted_receipt))
+        else:
+            response.append(render_fixup_detail(receipt, "minted"))
+    else:
+        response.append(render_receipt_detail(receipt))
+
+    response.append(Br())
+
+    node = mintinglite(receipt)
+    heading = H3("Uptime Events")
+    if node:
+        uptime_events = [
+            Div(style="display: flex; align-items: baseline;")(
+                heading,
+                A(style="margin-left:auto;", href=f"/csv/{rhash}", download=True)(
+                    "Download CSV"
+                ),
+            ),
+            render_uptime_events(node),
+        ]
+    else:
+        uptime_events = [
+            heading,
+            "Data not available for this period",
+        ]
+
+    response.extend(uptime_events)
+
+    return response
+
+
+def render_receipt_detail(r):
+    rows = [receipt_header_details()]
+    uptime = round(r["measured_uptime"] / STANDARD_PERIOD_DURATION * 100, 2)
+
+    rows.append(
+        Tr(
+            Td(datetime.fromtimestamp(r["period"]["start"]).date()),
+            Td(datetime.fromtimestamp(r["period"]["end"]).date()),
+            # Some receipts have uptime figures that are way too large
+            Td(f"{uptime}%") if uptime <= 100 else Td("Data not available"),
+            Td(round(r["reward"]["tft"] / TFT_DIVISOR, 2)),
+        )
+    )
+
+    rows.append(
+        Tr(
+            Th(Br(), Strong("CU")),
+            Th(Br(), Strong("SU")),
+            Th(Br(), Strong("NU")),
+            Th(Br(), Strong("Certification")),
+        )
+    )
+
+    rows.append(
+        Tr(
+            Td(r["cloud_units"]["cu"]),
+            Td(r["cloud_units"]["su"]),
+            Td(r["cloud_units"]["nu"]),
+            Td(r["node_type"]),
+        )
+    )
+    return Table(*rows)
+
+
+def render_fixup_detail(r, rtype):
+    """Some receipts are missing from the API. In that case, render a limited version of what the receipt would contain based on the info in the fixup receipt."""
+    rows = [receipt_header_details()]
+
+    rows.append(
+        Tr(
+            Td(datetime.fromtimestamp(r["period"]["start"]).date()),
+            Td(datetime.fromtimestamp(r["period"]["end"]).date()),
+            Td("Data not available"),
+            Td(round(r["correct_reward"]["tft"] / TFT_DIVISOR, 2)),
+        )
+    )
+
+    rows.append(
+        Tr(
+            Th(Br(), Strong("CU")),
+            Th(Br(), Strong("SU")),
+            Th(Br(), Strong("NU")),
+            Th(Br(), Strong("Certification")),
+        )
+    )
+
+    rows.append(
+        Tr(
+            Td(r[f"{rtype}_cloud_units"]["cu"]),
+            Td(r[f"{rtype}_cloud_units"]["su"]),
+            Td(r[f"{rtype}_cloud_units"]["nu"]),
+            Td("Data not available"),
+        )
+    )
+    return Table(*rows)
+
+
+def render_uptime_events(node):
     header = Tr(
         *[
             Th(Strong(label))
@@ -318,98 +482,22 @@ def render_minting_events(node):
     return Table(*rows)
 
 
-def render_receipts(receipts, sort_by="node"):
-    if sort_by == "node":
-        receipts = reversed(sorted(receipts, key=lambda x: x["period"]["start"]))
-        rows = [receipt_header_node()]
-        last_year = None
-        for receipt in receipts:
-            if receipt["type"] == "Minting":
-                period = Period(receipt["period"]["start"] + WIGGLE)
-                receipt["period"]["year"] = period.year
-                receipt["period"]["month_name"] = period.month_name
-                show_year = last_year != period.year
-                rows.append(render_receipt(receipt, False, sort_by, show_year))
-                last_year = period.year
-
-    elif sort_by == "period":
-        receipts = sorted(receipts, key=lambda x: x["node_id"])
-        rows = [receipt_header_period()]
-        for receipt in receipts:
-            if receipt["type"] == "Minting":
-                rows.append(render_receipt(receipt, False, sort_by))
-
-    return Table(*rows, cls="hover")
-
-
-def render_receipt(r, detail=True, sort_by="node", show_year=True):
-    uptime = round(r["measured_uptime"] / (30.45 * 24 * 60 * 60) * 100, 2)
-    if not detail:
-        row = Tr(
-            hx_get=f"/node/{r['node_id']}/{r['hash']}",
-            hx_target="#result",
-            hx_trigger="click",
-            hx_push_url="true",
-            hx_swap="show:top",
-        )
-    else:
-        row = Tr()
-
-    if sort_by == "node":
-        if detail:
-            elements = [
-                Td(datetime.fromtimestamp(r["period"]["start"]).date()),
-                Td(datetime.fromtimestamp(r["period"]["end"]).date()),
-            ]
-        else:
-            if show_year:
-                elements = [
-                    Td(f"{r['period']['year']}"),
-                    Td(r["period"]["month_name"]),
-                ]
-            else:
-                elements = [
-                    Td(),
-                    Td(r["period"]["month_name"]),
-                ]
-    if sort_by == "period":
-        elements = [
-            Td(r["node_id"]),
-        ]
-
-    if uptime <= 100:
-        elements.append(Td(f"{uptime}%"))
-    else:
-        # Some receipts have uptime figures that are way too large
-        elements.append(Td("Data not available"))
-
-    elements.append(Td(round(r["reward"]["tft"] / TFT_DIVISOR, 2)))
-    return row(*elements)
-
-
-def render_receipt_row2(r):
-    return [
-        Tr(
-            Th(Br(), Strong("CU")),
-            Th(Br(), Strong("SU")),
-            Th(Br(), Strong("NU")),
-            Th(Br(), Strong("Certification")),
-        ),
-        Tr(
-            Td(r["cloud_units"]["cu"]),
-            Td(r["cloud_units"]["su"]),
-            Td(r["cloud_units"]["nu"]),
-            Td(r["node_type"]),
-        ),
-    ]
-
-
 def receipt_header_node():
     return Tr(
         Th(Strong("Year")),
         Th(Strong("Month")),
         Th(Strong("Uptime")),
         Th(Strong("TFT Minted")),
+        Th(Strong("Fixup")),
+    )
+
+
+def receipt_header_period():
+    return Tr(
+        Th(Strong("Node ID")),
+        Th(Strong("Uptime")),
+        Th(Strong("TFT Minted")),
+        Th(Strong("Fixup")),
     )
 
 
@@ -417,14 +505,6 @@ def receipt_header_details():
     return Tr(
         Th(Strong("Period Start")),
         Th(Strong("Period End")),
-        Th(Strong("Uptime")),
-        Th(Strong("TFT Minted")),
-    )
-
-
-def receipt_header_period():
-    return Tr(
-        Th(Strong("Node ID")),
         Th(Strong("Uptime")),
         Th(Strong("TFT Minted")),
     )
