@@ -7,6 +7,8 @@ from pathlib import Path
 from typing import List, Dict
 from contextlib import contextmanager
 
+from grid3.minting.period import Period
+
 STANDARD_PERIOD_DURATION = 24 * 60 * 60 * (365 * 3 + 366 * 2) // 60
 
 
@@ -176,7 +178,7 @@ class ReceiptHandler:
 
         return receipts
 
-    def fetch_and_process_node(self, node_id: int):
+    def fetch_and_process_node(self, node_id: int) -> List[Dict]:
         """Process all receipts for a given node."""
         try:
             # Fetch receipts
@@ -230,6 +232,57 @@ class ReceiptHandler:
                 return self.fetch_and_process_node(node_id)
             else:
                 return self.get_stored_receipts(node_id)
+
+
+class PeriodReceipt:
+    """This is an abstraction over receipts for a given node in a given period.
+    When a fixup minting event occurs, two new receipts are generated for each
+    node included in the fixup. One is a second "Minting" receipt with all the
+    new values, and two is a "Fixup" receipt that describes the relationship
+    between the two regular receipts. Therefore for any node in any period,
+    there can be either 1 or 1 + 2N receipts, where N is the number of
+    applicable fixups for that period (I'm not aware of any periods with more
+    than one fixup so far, thus we'll asssume that N always equals 1)."""
+
+    def __init__(
+        self,
+        original_receipt: Dict,
+        corrected_receipt: Dict | None = None,
+        fixup_receipt: Dict | None = None,
+    ):
+        # We use the lingo in the fixup receipts: "minted"/"correct"
+        self.minted_receipt = original_receipt
+        self.correct_receipt = corrected_receipt
+        self.fixup_receipt = fixup_receipt
+
+        self.period = Period(original_receipt["period"]["start"])
+
+
+def make_period_receipts(receipts_input: List[Dict]) -> List[PeriodReceipt]:
+    period_receipts = []
+    by_period = {}
+    for receipt in receipts_input:
+        period_end = receipt["period"]["end"]
+        receipts = by_period.setdefault(period_end, {})
+        if receipt["type"] == "Minting":
+            receipts[receipt["hash"]] = receipt
+        elif receipt["type"] == "Fixup":
+            receipts["fixup"] = receipt
+
+    for period_end, receipts in by_period.items():
+        if "fixup" in receipts:
+            fixup = receipts["fixup"]
+            period_receipts.append(
+                PeriodReceipt(
+                    receipts[fixup["minted_receipt"]],
+                    receipts[fixup["correct_receipt"]],
+                    fixup,
+                )
+            )
+        else:
+            period_receipts.append(PeriodReceipt(receipts.popitem()[1]))
+
+    return period_receipts
 
 
 def main():
