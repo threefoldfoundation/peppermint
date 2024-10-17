@@ -48,13 +48,15 @@ class ReceiptHandler:
                 if not lock.locked():
                     self.locks.pop(number)
 
-    def fetch_receipt(self, receipt_hash: str) -> Dict:
+    def fetch_receipt(self, receipt_hash: str) -> Dict | None:
         """Fetch receipt from the API with a given hash."""
         url = f"{self.base_url}/{receipt_hash}"
         try:
             response = requests.get(url)
-            response.raise_for_status()
-            return self.process_receipt(response.json())
+            if response.ok:
+                return self.process_receipt(response.json())
+            else:
+                return None
         except requests.RequestException as e:
             raise Exception(f"Failed to fetch receipt {receipt_hash}: {str(e)}")
 
@@ -213,10 +215,12 @@ class ReceiptHandler:
             return receipt
         else:
             receipt = self.fetch_receipt(receipt_hash)
-            node_id = int(receipt["node_id"])
-            with self.lock(node_id):
-                self.save_receipt(receipt)
-                return receipt
+            if receipt:
+                node_id = int(receipt["node_id"])
+                with self.lock(node_id):
+                    self.save_receipt(receipt)
+
+            return receipt
 
     def has_node_receipts(self, node_id: int) -> bool:
         """If there's a timestamp on disk from a previous fetch, check if at
@@ -255,7 +259,12 @@ class PeriodReceipt:
         self.correct_receipt = corrected_receipt
         self.fixup_receipt = fixup_receipt
 
-        self.period = Period(original_receipt["period"]["start"])
+        if original_receipt:
+            self.node_id = original_receipt["node_id"]
+            self.period = Period(original_receipt["period"]["start"])
+        else:
+            self.node_id = fixup_receipt["node_id"]
+            self.period = Period(fixup_receipt["period"]["start"])
 
 
 def make_period_receipts(receipts_input: List[Dict]) -> List[PeriodReceipt]:
@@ -272,10 +281,19 @@ def make_period_receipts(receipts_input: List[Dict]) -> List[PeriodReceipt]:
     for period_end, receipts in by_period.items():
         if "fixup" in receipts:
             fixup = receipts["fixup"]
+            # Some hashes present in fixup receipts aren't returned by the API
+            try:
+                minted_receipt = receipts[fixup["minted_receipt"]]
+            except KeyError:
+                minted_receipt = None
+            try:
+                correct_receipt = receipts[fixup["correct_receipt"]]
+            except KeyError:
+                correct_receipt = None
             period_receipts.append(
                 PeriodReceipt(
-                    receipts[fixup["minted_receipt"]],
-                    receipts[fixup["correct_receipt"]],
+                    minted_receipt,
+                    correct_receipt,
                     fixup,
                 )
             )
