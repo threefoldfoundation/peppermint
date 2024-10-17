@@ -226,7 +226,6 @@ class ReceiptHandler:
 
     def get_node_receipts(self, node_id: int) -> List[Dict]:
         with self.lock(node_id):
-            timestamp = self.get_stored_timestamp(node_id)
             if not self.has_node_receipts(node_id):
                 return self.fetch_and_process_node(node_id)
             else:
