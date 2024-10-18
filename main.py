@@ -69,7 +69,7 @@ def get(rhash: str):
 
 
 @rt("/node/{node_id}")
-def get(req, node_id: int, show_empty: int = 0):
+def get(req, node_id: int, show_empty: bool = False):
     receipts = make_period_receipts(receipt_handler.get_node_receipts(node_id))
     if not receipts:
         results = "No receipts found."
