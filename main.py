@@ -67,7 +67,7 @@ def get(req, node_id: int):
     if not receipts:
         results = "No receipts found."
     else:
-        results = [render_receipt_overview(receipts)]
+        results = [H2(f"Node {node_id}"), render_receipt_overview(receipts)]
 
     if "hx-request" in req.headers:
         return results
@@ -80,9 +80,9 @@ def get(req, farm_id: int, sort_by: str = "node"):
     farm_receipts = fetch_farm_receipts(farm_id)
     results = []
     if sort_by == "node":
-        for node, receipts in farm_receipts:
+        for node_id, receipts in farm_receipts:
             if receipts:
-                results.append(H2(f"Node {node}"))
+                results.append(H2(f"Node {node_id}"))
                 results.append(render_receipt_overview(receipts, sort_by))
 
     elif sort_by == "period":
