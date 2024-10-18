@@ -63,7 +63,7 @@ def get(rhash: str):
 
 @rt("/node/{node_id}")
 def get(req, node_id: int):
-    receipts = receipt_handler.get_node_receipts(node_id)
+    receipts = make_period_receipts(receipt_handler.get_node_receipts(node_id))
     if not receipts:
         results = "No receipts found."
     else:
@@ -89,16 +89,11 @@ def get(req, farm_id: int, sort_by: str = "node"):
         receipts_by_period = {}
         for node, receipts in farm_receipts:
             for receipt in receipts:
-                # We must use the end here, because the start times on receipts
-                # are scaled to node creation for new nodes
-                receipts_by_period.setdefault(receipt["period"]["end"], []).append(
-                    receipt
-                )
-        for end, receipts in reversed(sorted(receipts_by_period.items())):
-            period = Period(end - WIGGLE)
+                receipts_by_period.setdefault(receipt.period.offset, []).append(receipt)
+        for _, receipts in reversed(sorted(receipts_by_period.items())):
+            period = receipt.period
             results.append(H2(f"{period.month_name} {period.year}"))
             results.append(render_receipt_overview(receipts, sort_by))
-
     if not results:
         results = "No receipts found."
 
@@ -147,7 +142,7 @@ def fetch_farm_receipts(farm_id: int) -> List[Tuple[int, list | None]]:
     processed_responses = []
     for receipt_list in receipt_lists:
         node_id = receipt_list[0]["node_id"]
-        processed_responses.append((node_id, receipt_list))
+        processed_responses.append((node_id, make_period_receipts(receipt_list)))
 
     # Sorts by node id
     return sorted(processed_responses)
@@ -267,22 +262,19 @@ def render_main(select="node", id_input=None, sort_by="node", result="", loading
 
 
 def render_receipt_overview(receipts, sort_by="node"):
-    period_receipts = make_period_receipts(receipts)
     if sort_by == "node":
-        period_receipts = reversed(
-            sorted(period_receipts, key=lambda x: x.period.start)
-        )
+        receipts = reversed(sorted(receipts, key=lambda x: x.period.start))
         rows = [receipt_header_node()]
         last_year = None
-        for receipt in period_receipts:
+        for receipt in receipts:
             show_year = last_year != receipt.period.year
             rows.append(render_receipt_row(receipt, sort_by, show_year))
             last_year = receipt.period.year
 
     elif sort_by == "period":
-        receipts = sorted(period_receipts, key=lambda x: x.node_id)
+        receipts = sorted(receipts, key=lambda x: x.node_id)
         rows = [receipt_header_period()]
-        for receipt in period_receipts:
+        for receipt in receipts:
             rows.append(render_receipt_row(receipt, sort_by))
 
     return Table(*rows, cls="hover")
