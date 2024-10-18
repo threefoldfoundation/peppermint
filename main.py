@@ -38,12 +38,19 @@ receipt_handler = ReceiptHandler()
 
 
 @rt("/")
-def get(select: str = "node", id_input: int = None, sort_by: str = "node"):
+def get(
+    select: str = "node",
+    id_input: int = None,
+    sort_by: str = "node",
+    show_empty: bool = False,
+):
     if not id_input:
         return render_main(select)
     else:
-        page = render_main(select, id_input, sort_by, loading=True)
-        headers = HtmxResponseHeaders(push_url=make_url(select, id_input, sort_by))
+        page = render_main(select, id_input, show_empty, sort_by, loading=True)
+        headers = HtmxResponseHeaders(
+            push_url=make_url(select, id_input, show_empty, sort_by)
+        )
         return page, headers
 
 
@@ -62,12 +69,15 @@ def get(rhash: str):
 
 
 @rt("/node/{node_id}")
-def get(req, node_id: int):
+def get(req, node_id: int, show_empty: int = 0):
     receipts = make_period_receipts(receipt_handler.get_node_receipts(node_id))
     if not receipts:
         results = "No receipts found."
     else:
-        results = [H2(f"Node {node_id}"), render_receipt_overview(receipts)]
+        results = [
+            H2(f"Node {node_id}"),
+            render_receipt_overview(receipts, "node", show_empty),
+        ]
 
     if "hx-request" in req.headers:
         return results
@@ -76,14 +86,14 @@ def get(req, node_id: int):
 
 
 @rt("/farm/{farm_id}")
-def get(req, farm_id: int, sort_by: str = "node"):
+def get(req, farm_id: int, sort_by: str = "node", show_empty: bool = False):
     farm_receipts = fetch_farm_receipts(farm_id)
     results = []
     if sort_by == "node":
         for node_id, receipts in farm_receipts:
             if receipts:
                 results.append(H2(f"Node {node_id}"))
-                results.append(render_receipt_overview(receipts, sort_by))
+                results.append(render_receipt_overview(receipts, sort_by, show_empty))
 
     elif sort_by == "period":
         receipts_by_period = {}
@@ -93,14 +103,14 @@ def get(req, farm_id: int, sort_by: str = "node"):
         for _, receipts in reversed(sorted(receipts_by_period.items())):
             period = receipt.period
             results.append(H2(f"{period.month_name} {period.year}"))
-            results.append(render_receipt_overview(receipts, sort_by))
+            results.append(render_receipt_overview(receipts, sort_by, show_empty))
     if not results:
         results = "No receipts found."
 
     if "hx-request" in req.headers:
         return results
     else:
-        return render_main("farm", farm_id, sort_by, results)
+        return render_main("farm", farm_id, show_empty, sort_by, results)
 
 
 @rt("/node/{node_id}/{rhash}")
@@ -118,11 +128,11 @@ def get(req, node_id: int, rhash: str):
         return render_main(id_input=node_id, result=details)
 
 
-def make_url(select, id_input, sort_by):
+def make_url(select, id_input, show_empty, sort_by):
     if select == "node":
-        return f"/{select}/{id_input}"
+        return f"/{select}/{id_input}?show_empty={show_empty}"
     elif select == "farm":
-        return f"/{select}/{id_input}?sort_by={sort_by}"
+        return f"/{select}/{id_input}?sort_by={sort_by}&show_empty={show_empty}"
 
 
 def fetch_farm_receipts(farm_id: int) -> List[Tuple[int, list | None]]:
@@ -148,7 +158,14 @@ def fetch_farm_receipts(farm_id: int) -> List[Tuple[int, list | None]]:
     return sorted(processed_responses)
 
 
-def render_main(select="node", id_input=None, sort_by="node", result="", loading=False):
+def render_main(
+    select="node",
+    id_input=None,
+    show_empty=False,
+    sort_by="node",
+    result="",
+    loading=False,
+):
     # If the user hit the /node or /farm paths, we want to set the drop down
     # but clear the url since state on page can diverge
     if not id_input:
@@ -160,7 +177,7 @@ def render_main(select="node", id_input=None, sort_by="node", result="", loading
     if loading:
         result = [
             P(
-                hx_get=make_url(select, id_input, sort_by),
+                hx_get=make_url(select, id_input, show_empty, sort_by),
                 # hx_target="body",
                 hx_swap="outerHTML",
                 hx_trigger="load",
@@ -204,6 +221,12 @@ def render_main(select="node", id_input=None, sort_by="node", result="", loading
                         ),
                         Button("Go", type="submit"),
                     ),
+                    CheckboxX(
+                        id="show_empty",
+                        value="True",
+                        label="Show empty periods",
+                        checked=show_empty,
+                    ),
                     Fieldset(id="sort_by", hidden=select != "farm")(
                         Legend("Sort by:"),
                         Input(
@@ -223,7 +246,6 @@ def render_main(select="node", id_input=None, sort_by="node", result="", loading
                         ),
                         Label("Period", fr="period"),
                     ),
-                    # CheckboxX(id="fixups", label="Show fixups"),
                 ),
                 Br(),
                 Div(*result, id="result"),
@@ -261,7 +283,9 @@ def render_main(select="node", id_input=None, sort_by="node", result="", loading
     )
 
 
-def render_receipt_overview(receipts, sort_by="node"):
+def render_receipt_overview(receipts, sort_by, show_empty):
+    if not show_empty:
+        receipts = [r for r in receipts if not r.empty]
     if sort_by == "node":
         receipts = reversed(sorted(receipts, key=lambda x: x.period.start))
         rows = [receipt_header_node()]

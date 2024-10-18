@@ -266,6 +266,14 @@ class PeriodReceipt:
             self.node_id = fixup_receipt["node_id"]
             self.period = Period(fixup_receipt["period"]["start"])
 
+        if fixup_receipt:
+            self.empty = (
+                fixup_receipt["minted_reward"]["tft"] == 0
+                and fixup_receipt["minted_reward"]["tft"] == 0
+            )
+        else:
+            self.empty = original_receipt["reward"]["tft"] == 0
+
 
 def make_period_receipts(receipts_input: List[Dict]) -> List[PeriodReceipt]:
     period_receipts = []
