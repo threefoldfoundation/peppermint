@@ -100,8 +100,8 @@ def get(req, farm_id: int, sort_by: str = "node", show_empty: bool = False):
         for node, receipts in farm_receipts:
             for receipt in receipts:
                 receipts_by_period.setdefault(receipt.period.offset, []).append(receipt)
-        for _, receipts in reversed(sorted(receipts_by_period.items())):
-            period = receipt.period
+        for offset, receipts in reversed(sorted(receipts_by_period.items())):
+            period = Period(offset=offset)
             results.append(H2(f"{period.month_name} {period.year}"))
             results.append(render_receipt_overview(receipts, sort_by, show_empty))
     if not results:
