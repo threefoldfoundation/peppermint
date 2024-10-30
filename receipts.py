@@ -267,12 +267,17 @@ class PeriodReceipt:
             self.period = Period(fixup_receipt["period"]["start"])
 
         if fixup_receipt:
-            self.empty = (
-                fixup_receipt["minted_reward"]["tft"] == 0
-                and fixup_receipt["minted_reward"]["tft"] == 0
-            )
+            if self.minted_receipt and self.correct_receipt:
+                self.empty = (
+                    self.minted_receipt["measured_uptime"] == 0
+                    and self.correct_receipt["measured_uptime"] == 0
+                )
+            elif self.correct_receipt:
+                self.empty = self.correct_receipt["measured_uptime"] == 0
+            else:
+                self.empty = False
         else:
-            self.empty = original_receipt["reward"]["tft"] == 0
+            self.empty = self.minted_receipt["measured_uptime"] == 0
 
 
 def make_period_receipts(receipts_input: List[Dict]) -> List[PeriodReceipt]:
