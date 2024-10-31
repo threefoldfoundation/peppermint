@@ -120,8 +120,8 @@ class ReceiptHandler:
         for receipt in receipts:
             # Handle both Minting and Fixup receipt types
             if isinstance(receipt, dict):
-                period = receipt.get("period")
-                end_time = period.get("end")
+                period = receipt["period"]
+                end_time = period["end"]
                 if end_time and (
                     latest_timestamp is None or end_time > latest_timestamp
                 ):
@@ -318,8 +318,10 @@ class NodeMintingPeriod:
 def make_node_minting_periods(receipts_input: List[Dict]) -> List[NodeMintingPeriod]:
     period_receipts = []
     by_period = {}
+    last_end = 0
     for receipt in receipts_input:
         period_end = receipt["period"]["end"]
+        last_end = max(last_end, period_end)
         receipts = by_period.setdefault(period_end, {})
         if receipt["type"] == "Minting":
             receipts[receipt["hash"]] = receipt
@@ -349,6 +351,19 @@ def make_node_minting_periods(receipts_input: List[Dict]) -> List[NodeMintingPer
             period_receipts.append(
                 NodeMintingPeriod.from_receipts(receipts.popitem()[1])
             )
+
+    # There are two scenarios, since minting and the publishing of receipts takes at least a few days after each period ends. Either the receipts for the last completed period are published or they are not. If they are not, then there are two periods, the last one and the current one, for which no receipts are available. Otherwise, it's only the current period.
+
+    this_period = Period()
+    previous_period = Period(offset=this_period.offset - 1)
+    node_id = period_receipts[0].node_id
+    period_receipts.append(
+        NodeMintingPeriod.for_unpublished_period(node_id, this_period)
+    )
+    if last_end < previous_period.end:
+        period_receipts.append(
+            NodeMintingPeriod.for_unpublished_period(node_id, previous_period)
+        )
 
     return period_receipts
 
