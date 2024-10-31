@@ -10,7 +10,7 @@ import requests
 from grid3.minting.period import Period
 
 STANDARD_PERIOD_DURATION = 24 * 60 * 60 * (365 * 3 + 366 * 2) // 60
-CONNECTION_POOL_SIZE = 5
+ONE_HOUR = 60 * 60
 
 
 class ReceiptHandler:
@@ -21,11 +21,20 @@ class ReceiptHandler:
     Thread safety is provided at the node level for get_node_receipts and get_receipt only.
     """
 
-    def __init__(self, base_url: str = "https://alpha.minting.tfchain.grid.tf/api/v1"):
+    def __init__(
+        self,
+        db_path: str = "receipts.db",
+        connection_pool_size: int = 5,
+        base_url: str = "https://alpha.minting.tfchain.grid.tf/api/v1",
+        query_rate: int = ONE_HOUR,
+    ):
+        self.db_path = db_path
+        self.connection_pool_size = connection_pool_size
         self.base_url = base_url
-        self.db_path = "receipts.db"
+        self.query_rate = query_rate
+
         self.pool = Queue()
-        for _ in range(CONNECTION_POOL_SIZE):
+        for _ in range(self.connection_pool_size):
             conn = sqlite3.connect(self.db_path, check_same_thread=False)
             conn.execute("PRAGMA journal_mode=WAL")
             self.pool.put(conn)
@@ -42,10 +51,14 @@ class ReceiptHandler:
             self.pool.put(conn)
 
     def init_db(self):
-        # We store the period_end because this is the data that's availble in
-        # the original receipt which uniquely identifies the period. The period
-        # start gets scaled for nodes that were created within the period in
-        # question, so it's not reliable.
+        """ "
+        We store the period_end for each receipt because this is the data that's
+        available in the original receipt which uniquely identifies the period.
+        The period start gets scaled for nodes that were created within the
+        period in question, so it's not reliable.
+
+        For node timestamps, the period end is the relevant information, since we'll use it to determine whether it's possible that new receipts exist. We also store the last time we fetched against the API, so we can limit the rate of requests (mostly for UX, since checking for new receipts is relatively slow but we want to keep checking until the new ones are published).
+        """
         with self.get_connection() as conn:
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS receipts (
@@ -57,9 +70,15 @@ class ReceiptHandler:
                 )
             """)
             conn.execute("""
-                CREATE TABLE IF NOT EXISTS node_timestamps (
+                CREATE TABLE IF NOT EXISTS node_last_period_end (
                     node_id INTEGER PRIMARY KEY,
-                    latest_timestamp INTEGER
+                    timestamp INTEGER
+                )
+            """)
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS node_last_query (
+                    node_id INTEGER PRIMARY KEY,
+                    timestamp INTEGER
                 )
             """)
             conn.commit()
@@ -76,7 +95,7 @@ class ReceiptHandler:
         except requests.RequestException as e:
             raise Exception(f"Failed to fetch receipt {receipt_hash}: {str(e)}")
 
-    def fetch_receipts(self, node_id: int) -> List[Dict]:
+    def fetch_node_receipts(self, node_id: int) -> List[Dict]:
         """Fetch receipts from the API for a given node ID."""
         url = f"{self.base_url}/node/{node_id}"
         try:
@@ -118,35 +137,35 @@ class ReceiptHandler:
             )
             conn.commit()
 
-    def get_latest_timestamp(self, receipts: List[Dict]) -> int | None:
-        """Extract the latest timestamp from a list of receipts."""
-        latest_timestamp = None
-
-        for receipt in receipts:
-            if isinstance(receipt, dict):
-                period = receipt["period"]
-                end_time = period["end"]
-                if end_time and (
-                    latest_timestamp is None or end_time > latest_timestamp
-                ):
-                    latest_timestamp = end_time
-
-        return latest_timestamp
-
-    def save_latest_timestamp(self, node_id: int, timestamp: int):
-        """Save the latest timestamp to the database."""
+    def save_last_period_end(self, node_id: int, timestamp: int):
         with self.get_connection() as conn:
             conn.execute(
-                "INSERT OR REPLACE INTO node_timestamps (node_id, latest_timestamp) VALUES (?, ?)",
+                "INSERT OR REPLACE INTO node_last_period_end (node_id, timestamp) VALUES (?, ?)",
                 (node_id, timestamp),
             )
             conn.commit()
 
-    def get_stored_timestamp(self, node_id: int) -> int | None:
-        """Get the stored timestamp for a node if it exists."""
+    def save_last_query_timestamp(self, node_id: int):
+        with self.get_connection() as conn:
+            conn.execute(
+                "INSERT OR REPLACE INTO node_last_query(node_id, timestamp) VALUES (?, ?)",
+                (node_id, time.time()),
+            )
+            conn.commit()
+
+    def get_last_period_end(self, node_id: int) -> int | None:
         with self.get_connection() as conn:
             cursor = conn.execute(
-                "SELECT latest_timestamp FROM node_timestamps WHERE node_id = ?",
+                "SELECT timestamp FROM node_last_period_end WHERE node_id = ?",
+                (node_id,),
+            )
+            row = cursor.fetchone()
+            return row[0] if row else None
+
+    def get_last_query_timestamp(self, node_id: int) -> int | None:
+        with self.get_connection() as conn:
+            cursor = conn.execute(
+                "SELECT timestamp FROM node_last_query WHERE node_id = ?",
                 (node_id,),
             )
             row = cursor.fetchone()
@@ -168,25 +187,39 @@ class ReceiptHandler:
             )
             return [json.loads(row[0]) for row in cursor.fetchall()]
 
+    def get_stored_node_period_receipts(
+        self, node_id: int, period: Period
+    ) -> List[Dict]:
+        """Get all stored receipts for a given node ID during a period."""
+        with self.get_connection() as conn:
+            cursor = conn.execute(
+                "SELECT receipt_data FROM receipts WHERE node_id = ? AND period_end = ?",
+                (node_id, period.end),
+            )
+            return [json.loads(row[0]) for row in cursor.fetchall()]
+
     def fetch_and_process_node(self, node_id: int) -> List[Dict]:
         """Process all receipts for a given node."""
-        receipts = self.fetch_receipts(node_id)
+        receipts = self.fetch_node_receipts(node_id)
 
         for receipt in receipts:
             self.save_receipt(receipt)
 
-        latest_timestamp = self.get_latest_timestamp(receipts)
-        if latest_timestamp:
-            self.save_latest_timestamp(node_id, latest_timestamp)
+        last_period_end = max(
+            [receipt["period"]["end"] for receipt in receipts], default=0
+        )
+        if last_period_end != 0:
+            self.save_last_period_end(node_id, last_period_end)
+
+        self.save_last_query_timestamp(node_id)
 
         print(f"Successfully processed {len(receipts)} receipts for node {node_id}")
-        if latest_timestamp:
-            print(f"Latest timestamp: {latest_timestamp}")
+        if last_period_end:
+            print(f"Latest timestamp: {last_period_end}")
 
         return receipts
 
     def get_receipt(self, receipt_hash: str) -> Dict | None:
-        """Sometimes we just need a single receipt. We don't bother linking to the node for now."""
         receipt = self.get_stored_receipt(receipt_hash)
         if not receipt:
             receipt = self.fetch_receipt(receipt_hash)
@@ -195,25 +228,33 @@ class ReceiptHandler:
 
         return receipt
 
-    def has_node_receipts(self, node_id: int) -> bool:
+    def has_all_node_receipts(self, node_id: int) -> bool:
         """If there's a timestamp on disk from a previous fetch, check if at
         least one minting period worth of time has elapsed since then. This
         indicates whether we already have all available receipts for this node.
         """
-        timestamp = self.get_stored_timestamp(node_id)
+        timestamp = self.get_last_period_end(node_id)
         return bool(timestamp and time.time() < timestamp + STANDARD_PERIOD_DURATION)
 
+    def query_time_elapsed(self, node_id: int) -> bool:
+        last_timestamp = self.get_last_query_timestamp(node_id)
+        if last_timestamp is None:
+            return True
+        else:
+            return last_timestamp + self.query_rate < time.time()
+
     def get_node_receipts(self, node_id: int) -> List[Dict]:
-        if not self.has_node_receipts(node_id):
+        if not self.has_all_node_receipts(node_id) and self.query_time_elapsed(node_id):
             return self.fetch_and_process_node(node_id)
         else:
             return self.get_stored_node_receipts(node_id)
 
     def get_node_period_receipts(self, node_id: int, period: Period) -> List[Dict]:
-        if not self.has_node_receipts(node_id):
-            return self.fetch_and_process_node(node_id)
-        else:
-            return self.get_stored_node_receipts(node_id)
+        receipts = self.get_stored_node_period_receipts(node_id, period)
+        if not receipts and self.query_time_elapsed(node_id):
+            self.fetch_and_process_node(node_id)
+            receipts = self.get_stored_node_period_receipts(node_id, period)
+        return receipts
 
 
 @dataclass
@@ -358,7 +399,7 @@ def main():
     handler.fetch_and_process_node(42)
 
     # Example of getting stored timestamp
-    timestamp = handler.get_stored_timestamp(42)
+    timestamp = handler.get_last_period_end(42)
     if timestamp:
         print(f"Stored timestamp for node 42: {timestamp}")
 
