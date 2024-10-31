@@ -1,16 +1,16 @@
 import json
-import os
+import sqlite3
 import time
 from contextlib import contextmanager
 from dataclasses import dataclass
-from pathlib import Path
-from threading import Lock
+from queue import Queue
 from typing import Dict, List
 
 import requests
 from grid3.minting.period import Period
 
 STANDARD_PERIOD_DURATION = 24 * 60 * 60 * (365 * 3 + 366 * 2) // 60
+CONNECTION_POOL_SIZE = 5
 
 
 class ReceiptHandler:
@@ -23,31 +23,46 @@ class ReceiptHandler:
 
     def __init__(self, base_url: str = "https://alpha.minting.tfchain.grid.tf/api/v1"):
         self.base_url = base_url
-        self.receipts_dir = Path("receipts")
-        self.nodes_dir = Path("nodes")
+        self.db_path = "receipts.db"
+        self.pool = Queue()
+        for _ in range(CONNECTION_POOL_SIZE):
+            conn = sqlite3.connect(self.db_path, check_same_thread=False)
+            conn.execute("PRAGMA journal_mode=WAL")
+            self.pool.put(conn)
 
-        # Create base directories if they don't exist
-        self.receipts_dir.mkdir(exist_ok=True)
-        self.nodes_dir.mkdir(exist_ok=True)
-
-        # To make the caching portion thread safe, we'll use per node locking
-        # with the locks stored in this dict
-        self.locks: Dict[int, Lock] = {}
-        self.one_lock_to_rule_them_all = Lock()
+        # Initialize database
+        self.init_db()
 
     @contextmanager
-    def lock(self, number: int):
-        with self.one_lock_to_rule_them_all:
-            lock = self.locks.setdefault(number, Lock())
+    def get_connection(self):
+        conn = self.pool.get()
         try:
-            lock.acquire()
-            yield
+            yield conn
         finally:
-            lock.release()
-            with self.one_lock_to_rule_them_all:
-                # If another thread didn't acquire the lock, deallocate it
-                if not lock.locked():
-                    self.locks.pop(number)
+            self.pool.put(conn)
+
+    def init_db(self):
+        # We store the period_end because this is the data that's availble in
+        # the original receipt which uniquely identifies the period. The period
+        # start gets scaled for nodes that were created within the period in
+        # question, so it's not reliable.
+        with self.get_connection() as conn:
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS receipts (
+                    hash TEXT PRIMARY KEY,
+                    node_id INTEGER,
+                    receipt_type TEXT,
+                    receipt_data TEXT,
+                    period_end INTEGER
+                )
+            """)
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS node_timestamps (
+                    node_id INTEGER PRIMARY KEY,
+                    latest_timestamp INTEGER
+                )
+            """)
+            conn.commit()
 
     def fetch_receipt(self, receipt_hash: str) -> Dict | None:
         """Fetch receipt from the API with a given hash."""
@@ -74,7 +89,6 @@ class ReceiptHandler:
     def process_receipt(self, data: Dict) -> dict:
         # Flatten receipts so the type is an attribute, and also include the
         # hash. This expects the data shape returned by the /node endpoint
-
         receipt_hash, receipt = data["hash"], data["receipt"]
         if "Minting" in receipt:
             receipt = receipt["Minting"]
@@ -85,40 +99,30 @@ class ReceiptHandler:
         receipt["hash"] = receipt_hash
         return receipt
 
-    def save_receipt(self, receipt: Dict) -> Path:
-        """Save a receipt to a file named with its hash."""
+    def save_receipt(self, receipt: Dict) -> None:
+        """Save a receipt to the database."""
         receipt_hash = receipt.get("hash")
         if not receipt_hash:
             raise ValueError("Receipt missing hash field")
 
-        file_path = self.receipts_dir / f"{receipt_hash}.json"
-
-        # Only write the file if it doesn't already exist
-        if not file_path.exists():
-            with open(file_path, "w") as f:
-                json.dump(receipt, f, indent=2)
-
-        return file_path
-
-    def create_node_symlinks(self, node_id: int, receipt_paths: List[Path]):
-        """Create symlinks to receipt files in the node's directory."""
-        node_dir = self.nodes_dir / str(node_id)
-        node_dir.mkdir(exist_ok=True)
-
-        # Create relative symlinks from node directory to receipt files
-        for receipt_path in receipt_paths:
-            symlink_path = node_dir / receipt_path.name
-            if not symlink_path.exists():
-                # Calculate relative path from node directory to receipt file
-                relative_path = os.path.relpath(receipt_path, node_dir)
-                symlink_path.symlink_to(relative_path)
+        with self.get_connection() as conn:
+            conn.execute(
+                "INSERT OR REPLACE INTO receipts (hash, node_id, receipt_type, receipt_data, period_end) VALUES (?, ?, ?, ?, ?)",
+                (
+                    receipt_hash,
+                    receipt["node_id"],
+                    receipt["type"],
+                    json.dumps(receipt),
+                    receipt["period"]["end"],
+                ),
+            )
+            conn.commit()
 
     def get_latest_timestamp(self, receipts: List[Dict]) -> int | None:
         """Extract the latest timestamp from a list of receipts."""
         latest_timestamp = None
 
         for receipt in receipts:
-            # Handle both Minting and Fixup receipt types
             if isinstance(receipt, dict):
                 period = receipt["period"]
                 end_time = period["end"]
@@ -130,72 +134,47 @@ class ReceiptHandler:
         return latest_timestamp
 
     def save_latest_timestamp(self, node_id: int, timestamp: int):
-        """Save the latest timestamp to a file in the node's directory."""
-        node_dir = self.nodes_dir / str(node_id)
-        timestamp_file = node_dir / "latest_timestamp"
-
-        with open(timestamp_file, "w") as f:
-            f.write(str(timestamp))
+        """Save the latest timestamp to the database."""
+        with self.get_connection() as conn:
+            conn.execute(
+                "INSERT OR REPLACE INTO node_timestamps (node_id, latest_timestamp) VALUES (?, ?)",
+                (node_id, timestamp),
+            )
+            conn.commit()
 
     def get_stored_timestamp(self, node_id: int) -> int | None:
         """Get the stored timestamp for a node if it exists."""
-        timestamp_file = self.nodes_dir / str(node_id) / "latest_timestamp"
-
-        if timestamp_file.exists():
-            try:
-                with open(timestamp_file, "r") as f:
-                    return int(f.read().strip())
-            except (ValueError, IOError):
-                return None
-        return None
+        with self.get_connection() as conn:
+            cursor = conn.execute(
+                "SELECT latest_timestamp FROM node_timestamps WHERE node_id = ?",
+                (node_id,),
+            )
+            row = cursor.fetchone()
+            return row[0] if row else None
 
     def get_stored_receipt(self, receipt_hash: str) -> Dict | None:
-        file_path = self.receipts_dir / f"{receipt_hash}.json"
-        if file_path.is_file():
-            try:
-                with open(file_path, "r") as f:
-                    return json.load(f)
-            except (IOError, json.JSONDecodeError) as e:
-                print(f"Error reading receipt {file_path}: {str(e)}")
-                return None
-        else:
-            return None
+        with self.get_connection() as conn:
+            cursor = conn.execute(
+                "SELECT receipt_data FROM receipts WHERE hash = ?", (receipt_hash,)
+            )
+            row = cursor.fetchone()
+            return json.loads(row[0]) if row else None
 
-    def get_stored_receipts(self, node_id: int) -> List[Dict]:
+    def get_stored_node_receipts(self, node_id: int) -> List[Dict]:
         """Get all stored receipts for a given node ID."""
-        node_dir = self.nodes_dir / str(node_id)
-        receipts = []
-
-        if not node_dir.exists():
-            return receipts
-
-        for symlink in node_dir.iterdir():
-            if symlink.is_symlink() and symlink.suffix == ".json":
-                try:
-                    with open(symlink, "r") as f:
-                        receipt = json.load(f)
-                        receipts.append(receipt)
-                except (IOError, json.JSONDecodeError) as e:
-                    print(f"Error reading receipt {symlink}: {str(e)}")
-                    continue
-
-        return receipts
+        with self.get_connection() as conn:
+            cursor = conn.execute(
+                "SELECT receipt_data FROM receipts WHERE node_id = ?", (node_id,)
+            )
+            return [json.loads(row[0]) for row in cursor.fetchall()]
 
     def fetch_and_process_node(self, node_id: int) -> List[Dict]:
         """Process all receipts for a given node."""
-        # Fetch receipts
         receipts = self.fetch_receipts(node_id)
 
-        # Save each receipt and collect their paths
-        receipt_paths = []
         for receipt in receipts:
-            receipt_path = self.save_receipt(receipt)
-            receipt_paths.append(receipt_path)
+            self.save_receipt(receipt)
 
-        # Create symlinks in node directory
-        self.create_node_symlinks(node_id, receipt_paths)
-
-        # Get and save the latest timestamp
         latest_timestamp = self.get_latest_timestamp(receipts)
         if latest_timestamp:
             self.save_latest_timestamp(node_id, latest_timestamp)
@@ -212,9 +191,7 @@ class ReceiptHandler:
         if not receipt:
             receipt = self.fetch_receipt(receipt_hash)
             if receipt:
-                node_id = int(receipt["node_id"])
-                with self.lock(node_id):
-                    self.save_receipt(receipt)
+                self.save_receipt(receipt)
 
         return receipt
 
@@ -227,11 +204,16 @@ class ReceiptHandler:
         return bool(timestamp and time.time() < timestamp + STANDARD_PERIOD_DURATION)
 
     def get_node_receipts(self, node_id: int) -> List[Dict]:
-        with self.lock(node_id):
-            if not self.has_node_receipts(node_id):
-                return self.fetch_and_process_node(node_id)
-            else:
-                return self.get_stored_receipts(node_id)
+        if not self.has_node_receipts(node_id):
+            return self.fetch_and_process_node(node_id)
+        else:
+            return self.get_stored_node_receipts(node_id)
+
+    def get_node_period_receipts(self, node_id: int, period: Period) -> List[Dict]:
+        if not self.has_node_receipts(node_id):
+            return self.fetch_and_process_node(node_id)
+        else:
+            return self.get_stored_node_receipts(node_id)
 
 
 @dataclass
@@ -381,7 +363,7 @@ def main():
         print(f"Stored timestamp for node 42: {timestamp}")
 
     # Example of getting stored receipts
-    receipts = handler.get_stored_receipts(42)
+    receipts = handler.get_stored_node_receipts(42)
     print(f"Found {len(receipts)} stored receipts for node 42")
 
 
