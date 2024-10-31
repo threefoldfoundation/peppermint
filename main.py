@@ -7,7 +7,7 @@ import grid3.network, grid3.minting.mintingnode
 from grid3.minting.period import Period
 
 from lightdark import LightDarkScript, LightLink, DarkLink
-from receipts import STANDARD_PERIOD_DURATION, ReceiptHandler, make_period_receipts
+from receipts import STANDARD_PERIOD_DURATION, ReceiptHandler, make_node_minting_periods
 
 try:
     from config import LIVE_RELOAD
@@ -70,7 +70,7 @@ def get(rhash: str):
 
 @rt("/node/{node_id}")
 def get(req, node_id: int, show_empty: bool = False):
-    receipts = make_period_receipts(receipt_handler.get_node_receipts(node_id))
+    receipts = make_node_minting_periods(receipt_handler.get_node_receipts(node_id))
     if not receipts:
         results = "No receipts found."
     else:
@@ -152,7 +152,7 @@ def fetch_farm_receipts(farm_id: int) -> List[Tuple[int, list | None]]:
     processed_responses = []
     for receipt_list in receipt_lists:
         node_id = receipt_list[0]["node_id"]
-        processed_responses.append((node_id, make_period_receipts(receipt_list)))
+        processed_responses.append((node_id, make_node_minting_periods(receipt_list)))
 
     # Sorts by node id
     return sorted(processed_responses)

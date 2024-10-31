@@ -1,12 +1,13 @@
-import os
 import json
-import requests
+import os
 import time
-from threading import Lock
-from pathlib import Path
-from typing import List, Dict
 from contextlib import contextmanager
+from dataclasses import dataclass
+from pathlib import Path
+from threading import Lock
+from typing import Dict, List
 
+import requests
 from grid3.minting.period import Period
 
 STANDARD_PERIOD_DURATION = 24 * 60 * 60 * (365 * 3 + 366 * 2) // 60
@@ -148,14 +149,14 @@ class ReceiptHandler:
                 return None
         return None
 
-    def get_stored_receipt(self, receipt_hash: str) -> Dict:
+    def get_stored_receipt(self, receipt_hash: str) -> Dict | None:
         file_path = self.receipts_dir / f"{receipt_hash}.json"
         if file_path.is_file():
             try:
                 with open(file_path, "r") as f:
                     return json.load(f)
             except (IOError, json.JSONDecodeError) as e:
-                print(f"Error reading receipt {symlink}: {str(e)}")
+                print(f"Error reading receipt {file_path}: {str(e)}")
                 return None
         else:
             return None
@@ -182,45 +183,40 @@ class ReceiptHandler:
 
     def fetch_and_process_node(self, node_id: int) -> List[Dict]:
         """Process all receipts for a given node."""
-        try:
-            # Fetch receipts
-            receipts = self.fetch_receipts(node_id)
+        # Fetch receipts
+        receipts = self.fetch_receipts(node_id)
 
-            # Save each receipt and collect their paths
-            receipt_paths = []
-            for receipt in receipts:
-                receipt_path = self.save_receipt(receipt)
-                receipt_paths.append(receipt_path)
+        # Save each receipt and collect their paths
+        receipt_paths = []
+        for receipt in receipts:
+            receipt_path = self.save_receipt(receipt)
+            receipt_paths.append(receipt_path)
 
-            # Create symlinks in node directory
-            self.create_node_symlinks(node_id, receipt_paths)
+        # Create symlinks in node directory
+        self.create_node_symlinks(node_id, receipt_paths)
 
-            # Get and save the latest timestamp
-            latest_timestamp = self.get_latest_timestamp(receipts)
-            if latest_timestamp:
-                self.save_latest_timestamp(node_id, latest_timestamp)
+        # Get and save the latest timestamp
+        latest_timestamp = self.get_latest_timestamp(receipts)
+        if latest_timestamp:
+            self.save_latest_timestamp(node_id, latest_timestamp)
 
-            print(f"Successfully processed {len(receipts)} receipts for node {node_id}")
-            if latest_timestamp:
-                print(f"Latest timestamp: {latest_timestamp}")
+        print(f"Successfully processed {len(receipts)} receipts for node {node_id}")
+        if latest_timestamp:
+            print(f"Latest timestamp: {latest_timestamp}")
 
-            return receipts
+        return receipts
 
-        except Exception as e:
-            print(f"Error processing node {node_id}: {str(e)}")
-
-    def get_receipt(self, receipt_hash: str) -> Dict:
+    def get_receipt(self, receipt_hash: str) -> Dict | None:
         """Sometimes we just need a single receipt. We don't bother linking to the node for now."""
-        if receipt := self.get_stored_receipt(receipt_hash):
-            return receipt
-        else:
+        receipt = self.get_stored_receipt(receipt_hash)
+        if not receipt:
             receipt = self.fetch_receipt(receipt_hash)
             if receipt:
                 node_id = int(receipt["node_id"])
                 with self.lock(node_id):
                     self.save_receipt(receipt)
 
-            return receipt
+        return receipt
 
     def has_node_receipts(self, node_id: int) -> bool:
         """If there's a timestamp on disk from a previous fetch, check if at
@@ -228,7 +224,7 @@ class ReceiptHandler:
         indicates whether we already have all available receipts for this node.
         """
         timestamp = self.get_stored_timestamp(node_id)
-        return timestamp and time.time() < timestamp + STANDARD_PERIOD_DURATION
+        return bool(timestamp and time.time() < timestamp + STANDARD_PERIOD_DURATION)
 
     def get_node_receipts(self, node_id: int) -> List[Dict]:
         with self.lock(node_id):
@@ -238,7 +234,8 @@ class ReceiptHandler:
                 return self.get_stored_receipts(node_id)
 
 
-class PeriodReceipt:
+@dataclass
+class NodeMintingPeriod:
     """This is an abstraction over receipts for a given node in a given period.
     When a fixup minting event occurs, two new receipts are generated for each
     node included in the fixup. One is a second "Minting" receipt with all the
@@ -246,27 +243,62 @@ class PeriodReceipt:
     between the two regular receipts. Therefore for any node in any period,
     there can be either 1 or 1 + 2N receipts, where N is the number of
     applicable fixups for that period (I'm not aware of any periods with more
-    than one fixup so far, thus we'll asssume that N always equals 1)."""
+    than one fixup so far, thus we'll asssume that N always equals 1).
 
-    def __init__(
-        self,
-        original_receipt: Dict,
+    It's also compatible with periods that don't have receipts available yet
+    because receipt publishing has not been completed yet for that period. In
+    that case, node_id and period must be specified."""
+
+    node_id: int
+    period: Period
+    minted_receipt: Dict | None = None
+    correct_receipt: Dict | None = None
+    fixup_receipt: Dict | None = None
+    has_receipt: bool = False
+    empty: bool = False
+
+    def __post_init__(self):
+        """Validate and set derived attributes after initialization"""
+        self.has_receipt = bool(
+            self.minted_receipt or self.correct_receipt or self.fixup_receipt
+        )
+        self._set_empty_status()
+
+    @classmethod
+    def from_receipts(
+        cls,
+        original_receipt: Dict | None,
         corrected_receipt: Dict | None = None,
         fixup_receipt: Dict | None = None,
-    ):
-        # We use the lingo in the fixup receipts: "minted"/"correct"
-        self.minted_receipt = original_receipt
-        self.correct_receipt = corrected_receipt
-        self.fixup_receipt = fixup_receipt
-
+    ) -> "NodeMintingPeriod":
+        """Create a NodeMintingPeriod from receipt data"""
         if original_receipt:
-            self.node_id = original_receipt["node_id"]
-            self.period = Period(original_receipt["period"]["start"])
+            node_id = original_receipt["node_id"]
+            period = Period(original_receipt["period"]["start"])
+        elif fixup_receipt:
+            node_id = fixup_receipt["node_id"]
+            period = Period(fixup_receipt["period"]["start"])
         else:
-            self.node_id = fixup_receipt["node_id"]
-            self.period = Period(fixup_receipt["period"]["start"])
+            raise ValueError("Either original or fixup receipt must be provided.")
 
-        if fixup_receipt:
+        return cls(
+            node_id=node_id,
+            period=period,
+            minted_receipt=original_receipt,
+            correct_receipt=corrected_receipt,
+            fixup_receipt=fixup_receipt,
+        )
+
+    @classmethod
+    def for_unpublished_period(
+        cls, node_id: int, period: Period
+    ) -> "NodeMintingPeriod":
+        """Create a NodeMintingPeriod for an unpublished period"""
+        return cls(node_id=node_id, period=period)
+
+    def _set_empty_status(self) -> None:
+        """Determine if the receipt represents empty uptime"""
+        if self.fixup_receipt:
             if self.minted_receipt and self.correct_receipt:
                 self.empty = (
                     self.minted_receipt["measured_uptime"] == 0
@@ -276,11 +308,14 @@ class PeriodReceipt:
                 self.empty = self.correct_receipt["measured_uptime"] == 0
             else:
                 self.empty = False
-        else:
+        elif self.minted_receipt:
             self.empty = self.minted_receipt["measured_uptime"] == 0
+        else:
+            # For unpublished periods, assume not empty
+            self.empty = False
 
 
-def make_period_receipts(receipts_input: List[Dict]) -> List[PeriodReceipt]:
+def make_node_minting_periods(receipts_input: List[Dict]) -> List[NodeMintingPeriod]:
     period_receipts = []
     by_period = {}
     for receipt in receipts_input:
@@ -304,14 +339,16 @@ def make_period_receipts(receipts_input: List[Dict]) -> List[PeriodReceipt]:
             except KeyError:
                 correct_receipt = None
             period_receipts.append(
-                PeriodReceipt(
+                NodeMintingPeriod.from_receipts(
                     minted_receipt,
                     correct_receipt,
                     fixup,
                 )
             )
         else:
-            period_receipts.append(PeriodReceipt(receipts.popitem()[1]))
+            period_receipts.append(
+                NodeMintingPeriod.from_receipts(receipts.popitem()[1])
+            )
 
     return period_receipts
 
