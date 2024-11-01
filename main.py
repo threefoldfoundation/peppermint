@@ -1,12 +1,17 @@
-import sqlite3, concurrent.futures, threading, os
-from datetime import datetime
+import concurrent.futures
+import os
+import sqlite3
+import threading
+import time
+from datetime import datetime, timedelta
 from typing import Tuple
 
+import grid3.minting.mintingnode
+import grid3.network
 from fasthtml.common import *
-import grid3.network, grid3.minting.mintingnode
 from grid3.minting.period import Period
 
-from lightdark import LightDarkScript, LightLink, DarkLink
+from lightdark import DarkLink, LightDarkScript, LightLink
 from receipts import STANDARD_PERIOD_DURATION, ReceiptHandler, make_node_minting_periods
 
 try:
@@ -59,9 +64,10 @@ def get(select: str):
     return render_main(select)
 
 
-@rt("/csv/{rhash}")
-def get(rhash: str):
-    node = mintinglite(receipt_handler.get_receipt(rhash))
+@rt("/csv/{node_id}/period_slug")
+def get(node_id: int, period_slug: str):
+    period = slug_to_period(period_slug)
+    node = mintinglite(node_id, period)
     filename = f"node{node.id}.csv"
     path = "csvs/" + filename
     node.write_csv(path)
@@ -97,7 +103,7 @@ def get(req, farm_id: int, sort_by: str = "node", show_empty: bool = False):
 
     elif sort_by == "period":
         receipts_by_period = {}
-        for node, receipts in farm_receipts:
+        for _, receipts in farm_receipts:
             for receipt in receipts:
                 receipts_by_period.setdefault(receipt.period.offset, []).append(receipt)
         for offset, receipts in reversed(sorted(receipts_by_period.items())):
@@ -113,14 +119,9 @@ def get(req, farm_id: int, sort_by: str = "node", show_empty: bool = False):
         return render_main("farm", farm_id, show_empty, sort_by, results)
 
 
-@rt("/node/{node_id}/{rhash}")
-def get(req, node_id: int, rhash: str):
-    details = render_details(rhash)
-
-    # Details can be an error which is a string. Also the receipt might not be cached before we call render_details above. This whole thing is kinda ugly... TODO: refactor error handling
-    if type(details) is not str:
-        if receipt_handler.get_receipt(rhash)["node_id"] != node_id:
-            details = "Hash doesn't match node id"
+@rt("/node/{node_id}/{period_slug}")
+def get(req, node_id: int, period_slug: str):
+    details = render_details(node_id, period_slug)
 
     if "hx-request" in req.headers:
         return details
@@ -304,30 +305,40 @@ def render_receipt_overview(receipts, sort_by, show_empty):
     return Table(*rows, cls="hover")
 
 
-def render_receipt_row(period_receipt, sort_by="node", show_year=True):
-    # The fixup receipt contains the hashes of the original and corrected
-    # receipts, so using its hash here is a convenient way to encode that
+def render_receipt_row(node_period, sort_by="node", show_year=True):
+    node_id = node_period.node_id
+    period = node_period.period
 
-    if period_receipt.fixup_receipt:
-        rhash = period_receipt.fixup_receipt["hash"]
+    if node_period.has_receipt:
+        if node_period.correct_receipt:
+            receipt = node_period.correct_receipt
+        elif node_period.minted_receipt:
+            receipt = node_period.minted_receipt
+        else:
+            # So far I didn't see this one
+            return Tr(Td("Data not available"), Td(), Td(), Td())
+
+        uptime = receipt["measured_uptime"]
+        reward = round(receipt["reward"]["tft"] / TFT_DIVISOR, 2)
     else:
-        rhash = period_receipt.minted_receipt["hash"]
+        minting_node = mintinglite(node_id, period)
+        if minting_node:
+            uptime = minting_node.uptime
+        else:
+            uptime = None
+        reward = "Data not available"
 
-    # For rendering the details on the overview, we'll use the corrected
-    # receipt if available, since that represents the final state of the node's
-    # minting for the period. Sometimes only the correct_rectip is available,
-    # for whatever reason
-
-    if period_receipt.correct_receipt:
-        r = period_receipt.correct_receipt
-    elif period_receipt.minted_receipt:
-        r = period_receipt.minted_receipt
+    now = time.time()
+    if now > period.end and uptime is not None:
+        uptime_percent = round(uptime / STANDARD_PERIOD_DURATION * 100, 2)
+    elif uptime is not None:
+        scaled_period_duration = now - period.start
+        uptime_percent = round(uptime / scaled_period_duration * 100, 2)
     else:
-        # So far I didn't see this one
-        return Tr(Td("Data not available"))
+        uptime_percent = None
 
     row = Tr(
-        hx_get=f"/node/{r['node_id']}/{rhash}",
+        hx_get=f"/node/{node_id}/{period_to_slug(period)}",
         hx_target="#result",
         hx_trigger="click",
         hx_push_url="true",
@@ -337,66 +348,85 @@ def render_receipt_row(period_receipt, sort_by="node", show_year=True):
     if sort_by == "node":
         if show_year:
             elements = [
-                Td(f"{period_receipt.period.year}"),
-                Td(period_receipt.period.month_name),
+                Td(f"{period.year}"),
+                Td(period.month_name),
             ]
         else:
             elements = [
                 Td(),
-                Td(period_receipt.period.month_name),
+                Td(period.month_name),
             ]
     elif sort_by == "period":
         elements = [
-            Td(r["node_id"]),
+            Td(f"{node_id}"),
         ]
 
-    uptime = round(r["measured_uptime"] / STANDARD_PERIOD_DURATION * 100, 2)
-    if uptime <= 100:
-        elements.append(Td(f"{uptime}%"))
+    if uptime_percent is not None and uptime_percent <= 100:
+        elements.append(Td(f"{uptime_percent}%"))
     else:
         # Some receipts have uptime figures that are way too large
         elements.append(Td("Data not available"))
 
-    elements.append(Td(round(r["reward"]["tft"] / TFT_DIVISOR, 2)))
-    elements.append(Td("✔️" if period_receipt.fixup_receipt else ""))
+    elements.append(Td(reward))
+    elements.append(Td("✔️" if node_period.fixup_receipt else ""))
     return row(*elements)
 
 
-def render_details(rhash):
-    receipt = receipt_handler.get_receipt(rhash)
-    response = [H2(f"Node {receipt['node_id']} Details")]
-    if receipt["type"] == "Fixup":
-        minted_receipt = receipt_handler.get_receipt(receipt["minted_receipt"])
-        correct_receipt = receipt_handler.get_receipt(receipt["correct_receipt"])
+def render_details(node_id, period_slug):
+    period = Period(
+        (datetime.strptime(period_slug, "%B-%Y") + timedelta(days=15)).timestamp()
+    )
 
-        # It's possible that either the minted_receipt or the correct_receipt
-        # is missing from the receipt API. In that case, fill in the details we
-        # have from the fixup receipt
-        response.append(H3("Corrected Receipt"))
-        if correct_receipt:
-            response.append(render_receipt_detail(correct_receipt))
-        else:
-            response.append(render_fixup_detail(receipt, "correct"))
+    receipts = receipt_handler.get_node_period_receipts(node_id, period)
+    node = mintinglite(node_id, period)
+    response = [H2(f"Node {node_id} - {period.month_name} {period.year}")]
+    if receipts:
+        receipts_by_hash = {}
+        fixup = None
+        for receipt in receipts:
+            receipts_by_hash[receipt["hash"]] = receipt
+            if receipt["type"] == "Fixup":
+                fixup = receipt
 
-        response.append(H3("Original Receipt"))
-        if minted_receipt:
-            response.append(render_receipt_detail(minted_receipt))
+        if fixup:
+            minted_receipt = receipts.get(fixup["minted_receipt"])
+            correct_receipt = receipts.get(fixup["correct_receipt"])
+
+            # It's possible that either the minted_receipt or the
+            # correct_receipt is missing from the receipt API. In that case,
+            # fill in the details we have from the fixup receipt
+            response.append(H3("Corrected Receipt"))
+            if correct_receipt:
+                response.append(render_receipt_detail(correct_receipt))
+            else:
+                response.append(render_fixup_detail(receipt, "correct"))
+
+            response.append(H3("Original Receipt"))
+            if minted_receipt:
+                response.append(render_receipt_detail(minted_receipt))
+            else:
+                response.append(render_fixup_detail(receipt, "minted"))
         else:
-            response.append(render_fixup_detail(receipt, "minted"))
-    else:
-        response.append(render_receipt_detail(receipt))
+            response.append(render_receipt_detail(receipt))
+    elif node:
+        response.append(
+            P(
+                "No receipts found for this period. Either the period hasn't ended yet or the receipts for this period aren't yet available."
+            )
+        )
 
     response.append(Br())
 
-    node = mintinglite(receipt)
     heading = H3("Uptime Events")
     if node:
         uptime_events = [
             Div(style="display: flex; align-items: baseline;")(
                 heading,
-                A(style="margin-left:auto;", href=f"/csv/{rhash}", download=True)(
-                    "Download CSV"
-                ),
+                A(
+                    style="margin-left:auto;",
+                    href=f"/csv/{node_id}/{period_to_slug(period)}",
+                    download=True,
+                )("Download CSV"),
             ),
             render_uptime_events(node),
         ]
@@ -526,20 +556,19 @@ def receipt_header_details():
     )
 
 
-def mintinglite(receipt):
+def mintinglite(node_id, period):
     # For testing without db file present
     if not os.path.exists("tfchain.db"):
         return None
 
     con = sqlite3.connect("tfchain.db")
     # Check if our db contains all events for the period in question
-    node_id = receipt["node_id"]
     has_start = con.execute(
         "SELECT 1 FROM PowerState WHERE node_id=? AND timestamp>=?  AND timestamp<=?",
         [
             node_id,
-            (receipt["period"]["start"] - WIGGLE),
-            (receipt["period"]["start"] + WIGGLE),
+            (period.start - WIGGLE),
+            (period.start + WIGGLE),
         ],
     ).fetchone()
 
@@ -556,9 +585,16 @@ def mintinglite(receipt):
     if not has_start:
         return None
     else:
-        period = Period(receipt["period"]["start"] + WIGGLE)
         node = grid3.minting.mintingnode.check_node(con, node_id, period)
         return node
+
+
+def slug_to_period(slug):
+    return Period((datetime.strptime(slug, "%B-%Y") + timedelta(days=15)).timestamp())
+
+
+def period_to_slug(period):
+    return f"{period.month_name.lower()}-{period.year}"
 
 
 serve()
