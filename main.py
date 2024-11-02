@@ -410,16 +410,26 @@ def render_details(node_id, period_slug):
             response.append(render_receipt_detail(receipt))
     elif node:
         if time.time() < period.end:
-            response.append(Small(Em("This minting period has not ended yet. Uptime data is approximate and does not reflect the final data that will be used for minting.")))
+            response.append(
+                Small(
+                    Em(
+                        "This minting period has not ended yet. Uptime data is approximate and does not reflect the final data that will be used for minting."
+                    )
+                )
+            )
         else:
-            response.append(Small(Em("Minting period has ended, but minting receipts aren't yet available. Uptime data is approximate and does not reflect the final data that will be used for minting.")))
+            response.append(
+                Small(
+                    Em(
+                        "Minting period has ended, but minting receipts aren't yet available. Uptime data is approximate and does not reflect the final data that will be used for minting."
+                    )
+                )
+            )
 
         response.append(Br())
         response.append(Br())
 
-        response.append(
-            render_no_receipt_detail(node)
-        )
+        response.append(render_no_receipt_detail(node))
     else:
         response.append(P("Data not available for this period"))
     response.append(Br())
