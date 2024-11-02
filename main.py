@@ -64,7 +64,7 @@ def get(select: str):
     return render_main(select)
 
 
-@rt("/csv/{node_id}/period_slug")
+@rt("/csv/{node_id}/{period_slug}")
 def get(node_id: int, period_slug: str):
     period = slug_to_period(period_slug)
     node = mintinglite(node_id, period)
@@ -409,12 +409,19 @@ def render_details(node_id, period_slug):
         else:
             response.append(render_receipt_detail(receipt))
     elif node:
-        response.append(
-            P(
-                "No receipts found for this period. Either the period hasn't ended yet or the receipts for this period aren't yet available."
-            )
-        )
+        if time.time() < period.end:
+            response.append(Small(Em("This minting period has not ended yet. Uptime data is approximate and does not reflect the final data that will be used for minting.")))
+        else:
+            response.append(Small(Em("Minting period has ended, but minting receipts aren't yet available. Uptime data is approximate and does not reflect the final data that will be used for minting.")))
 
+        response.append(Br())
+        response.append(Br())
+
+        response.append(
+            render_no_receipt_detail(node)
+        )
+    else:
+        response.append(P("Data not available for this period"))
     response.append(Br())
 
     heading = H3("Uptime Events")
@@ -508,6 +515,37 @@ def render_fixup_detail(r, rtype):
     return Table(*rows)
 
 
+def render_no_receipt_detail(node):
+    """For periods with no receipt yet, render a limited details table from the
+    MintingNode data."""
+    rows = [
+        Tr(
+            Th(Strong("Period Start")),
+            Th(Strong("Period End")),
+            Th(Strong("Uptime")),
+            Th(Strong("Downtime")),
+        )
+    ]
+
+    now = time.time()
+    if now < node.period.end:
+        scaled_period_duration = now - node.period.start
+        uptime_percent = round(node.uptime / scaled_period_duration * 100, 2)
+    else:
+        uptime_percent = round(node.uptime / STANDARD_PERIOD_DURATION * 100, 2)
+
+    rows.append(
+        Tr(
+            Td(datetime.fromtimestamp(node.period.start).date()),
+            Td(datetime.fromtimestamp(node.period.end).date()),
+            Td(f"{uptime_percent}%"),
+            Td(format_duration(node.downtime)),
+        )
+    )
+
+    return Table(*rows)
+
+
 def render_uptime_events(node):
     header = Tr(
         *[
@@ -595,6 +633,42 @@ def slug_to_period(slug):
 
 def period_to_slug(period):
     return f"{period.month_name.lower()}-{period.year}"
+
+
+def format_duration(seconds):
+    decmal_places = 2
+    if seconds == 0:
+        return "0 seconds"
+
+    # Define time units in seconds
+    minute = 60
+    hour = minute * 60
+    day = hour * 24
+
+    if seconds < minute:
+        # Less than a minute
+        return f"{seconds} {'second' if seconds == 1 else 'seconds'}"
+
+    elif seconds < hour:
+        # Convert to minutes
+        minutes = round(seconds / minute, decmal_places)
+        if minutes.is_integer():
+            minutes = int(minutes)
+        return f"{minutes} {'minute' if minutes == 1 else 'minutes'}"
+
+    elif seconds < (hour * 48):  # Switch to days after 48 hours
+        # Convert to hours
+        hours = round(seconds / hour, decmal_places)
+        if hours.is_integer():
+            hours = int(hours)
+        return f"{hours} {'hour' if hours == 1 else 'hours'}"
+
+    else:
+        # Convert to days
+        days = round(seconds / day, decmal_places)
+        if days.is_integer():
+            days = int(days)
+        return f"{days} {'day' if days == 1 else 'days'}"
 
 
 serve()
