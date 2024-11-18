@@ -60,7 +60,8 @@ class ReceiptHandler:
         For node timestamps, the period end is the relevant information, since we'll use it to determine whether it's possible that new receipts exist. We also store the last time we fetched against the API, so we can limit the rate of requests (mostly for UX, since checking for new receipts is relatively slow but we want to keep checking until the new ones are published).
         """
         with self.get_connection() as conn:
-            conn.execute("""
+            conn.execute(
+                """
                 CREATE TABLE IF NOT EXISTS receipts (
                     hash TEXT PRIMARY KEY,
                     node_id INTEGER,
@@ -68,19 +69,24 @@ class ReceiptHandler:
                     receipt_data TEXT,
                     period_end INTEGER
                 )
-            """)
-            conn.execute("""
+            """
+            )
+            conn.execute(
+                """
                 CREATE TABLE IF NOT EXISTS node_last_period_end (
                     node_id INTEGER PRIMARY KEY,
                     timestamp INTEGER
                 )
-            """)
-            conn.execute("""
+            """
+            )
+            conn.execute(
+                """
                 CREATE TABLE IF NOT EXISTS node_last_query (
                     node_id INTEGER PRIMARY KEY,
                     timestamp INTEGER
                 )
-            """)
+            """
+            )
             conn.commit()
 
     def fetch_receipt(self, receipt_hash: str) -> Dict | None:
@@ -93,7 +99,8 @@ class ReceiptHandler:
             else:
                 return None
         except requests.RequestException as e:
-            raise Exception(f"Failed to fetch receipt {receipt_hash}: {str(e)}")
+            print(f"Failed to fetch receipt {receipt_hash}: {str(e)}")
+            return None
 
     def fetch_node_receipts(self, node_id: int) -> List[Dict]:
         """Fetch receipts from the API for a given node ID."""
@@ -103,7 +110,8 @@ class ReceiptHandler:
             response.raise_for_status()
             return [self.process_receipt(r) for r in response.json()]
         except requests.RequestException as e:
-            raise Exception(f"Failed to fetch receipts for node {node_id}: {str(e)}")
+            print(f"Failed to fetch receipts for node {node_id}: {str(e)}")
+            return []
 
     def process_receipt(self, data: Dict) -> dict:
         # Flatten receipts so the type is an attribute, and also include the
@@ -338,7 +346,11 @@ class NodeMintingPeriod:
             self.empty = False
 
 
-def make_node_minting_periods(receipts_input: List[Dict]) -> List[NodeMintingPeriod]:
+def make_node_minting_periods(node_id: int, receipts_input: List[Dict]) -> List[NodeMintingPeriod]:
+    """We pass in the node id explicity, because this function might be called
+    for nodes that are too new to have any receipts. In that case the receipts
+    input list is empty and only one NodeMintingPeriod should be returned
+    """
     period_receipts = []
     by_period = {}
     last_end = 0
@@ -375,18 +387,31 @@ def make_node_minting_periods(receipts_input: List[Dict]) -> List[NodeMintingPer
                 NodeMintingPeriod.from_receipts(receipts.popitem()[1])
             )
 
-    # There are two scenarios, since minting and the publishing of receipts takes at least a few days after each period ends. Either the receipts for the last completed period are published or they are not. If they are not, then there are two periods, the last one and the current one, for which no receipts are available. Otherwise, it's only the current period.
+    # There are two scenarios, since minting and the publishing of receipts takes at least a few days after each period ends. Either the receipts for the last completed period are published or they are not. If they are not, then there are two periods, the last one and the current one, for which no receipts are available. Otherwise, it's only the current period. From there, we must also account for the fact that the node might not have existed last period. So if last period's receipts haven't been published, and this node has no receipts, we need to query the node creation time
 
     this_period = Period()
     previous_period = Period(offset=this_period.offset - 1)
-    node_id = period_receipts[0].node_id
     period_receipts.append(
         NodeMintingPeriod.for_unpublished_period(node_id, this_period)
     )
+    # The last period we found a receipt for is earlier than the previous one
     if last_end < previous_period.end:
-        period_receipts.append(
-            NodeMintingPeriod.for_unpublished_period(node_id, previous_period)
-        )
+        if len(period_receipts) > 1:
+            # Node has receipt history, so it must have existed before the
+            # previous period
+            period_receipts.append(
+                NodeMintingPeriod.for_unpublished_period(node_id, previous_period)
+            )
+        else:
+            # No receipt history, so we need to check if this node existed at
+            # any time during the previous period. TODO: the node creation time
+            # should be a parameter of this function that the caller can query
+            # once and cache
+            node = requests.get(f'https://gridproxy.grid.tf/nodes/{node_id}').json()
+            if node['created'] < previous_period.end:
+                period_receipts.append(
+                    NodeMintingPeriod.for_unpublished_period(node_id, previous_period)
+                )
 
     return period_receipts
 

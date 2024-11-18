@@ -144,16 +144,30 @@ def fetch_farm_receipts(farm_id: int) -> List[Tuple[int, list | None]]:
 
     # If all or most of the nodes are caught up in the cache, then the thread pool might do more harm than good. But this is nice and simple
     if len(node_ids) > 1:
-        pool = concurrent.futures.ThreadPoolExecutor(max_workers=20)
-        receipt_lists = list(pool.map(receipt_handler.get_node_receipts, node_ids))
+        receipts_by_node_id = {}
+        with concurrent.futures.ThreadPoolExecutor(max_workers=20) as pool:
+            for node_id in node_ids:
+                receipts_by_node_id[node_id] = pool.submit(
+                    receipt_handler.get_node_receipts, node_id
+                )
+
+        processed_responses = []
+        for node_id, future in receipts_by_node_id.items():
+            receipt_list = future.result()
+            processed_responses.append(
+                (node_id, make_node_minting_periods(node_id, receipt_list))
+            )
     else:
         # TODO: This throws an error if the nodes list is empty. We need to alert the user about the problem
-        receipt_lists = [receipt_handler.get_node_receipts(node_ids[0])]
-
-    processed_responses = []
-    for receipt_list in receipt_lists:
-        node_id = receipt_list[0]["node_id"]
-        processed_responses.append((node_id, make_node_minting_periods(receipt_list)))
+        node_id = node_ids[0]
+        processed_responses = [
+            (
+                node_id,
+                make_node_minting_periods(
+                    node_id, receipt_handler.get_node_receipts(node_id)
+                ),
+            )
+        ]
 
     # Sorts by node id
     return sorted(processed_responses)
