@@ -638,15 +638,28 @@ def mintinglite(node_id, period):
         return None
 
     con = sqlite3.connect("tfchain.db")
+
+    # The code below probably adds a decent efficiency gain for periods where
+    # we don't have the tfchain data (and that's currently quite a lot of the
+    # periods, since we never went back and indexed the whole chain). But it
+    # also doesn't work for the period when the node joined the network. Since
+    # there's no PowerState for that node at the beginning of the period, this
+    # logic skips the period entirely
+
+    # TODO: This is another place where knowing the node creation time would be
+    # relevant. Then we could also check if the period is the node's creation
+    # period. It might also be helpful to keep a second checkpoint,
+    # representing the oldest block we've processed and its timestamp.
+
     # Check if our db contains all events for the period in question
-    has_start = con.execute(
-        "SELECT 1 FROM PowerState WHERE node_id=? AND timestamp>=?  AND timestamp<=?",
-        [
-            node_id,
-            (period.start - WIGGLE),
-            (period.start + WIGGLE),
-        ],
-    ).fetchone()
+    # has_start = con.execute(
+    #     "SELECT 1 FROM PowerState WHERE node_id=? AND timestamp>=?  AND timestamp<=?",
+    #     [
+    #         node_id,
+    #         (period.start - WIGGLE),
+    #         (period.start + WIGGLE),
+    #     ],
+    # ).fetchone()
 
     # has_end = con.execute(
     #     "SELECT 1 FROM PowerState WHERE node_id=? AND timestamp>=?  AND timestamp<=?",
@@ -658,12 +671,14 @@ def mintinglite(node_id, period):
     # ).fetchone()
 
     # Generally we won't have any partial periods, except for the ongoing period, due to default behavior of the minting data ingester. So this is a sufficient check that there's some data to show
-    if not has_start:
-        return None
-    else:
-        node = grid3.minting.mintingnode.check_node(con, node_id, period)
-        return node
+    # if not has_start:
+    #     return None
+    # else:
+    #     node = grid3.minting.mintingnode.check_node(con, node_id, period)
+    #     return node
 
+    node = grid3.minting.mintingnode.check_node(con, node_id, period)
+    return node
 
 def slug_to_period(slug):
     return Period((datetime.strptime(slug, "%B-%Y") + timedelta(days=15)).timestamp())
