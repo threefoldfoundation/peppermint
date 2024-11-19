@@ -4,7 +4,7 @@ import sqlite3
 import threading
 import time
 from datetime import datetime, timedelta
-from typing import Tuple
+from typing import Tuple, List
 
 import grid3.minting.mintingnode
 import grid3.network
@@ -67,10 +67,10 @@ def get(select: str):
 @rt("/csv/{node_id}/{period_slug}")
 def get(node_id: int, period_slug: str):
     period = slug_to_period(period_slug)
-    node = mintinglite(node_id, period)
-    filename = f"node{node.id}.csv"
+    minting_node = mintinglite(node_id, period)
+    filename = f"node{minting_node.id}.csv"
     path = "csvs/" + filename
-    node.write_csv(path)
+    minting_node.write_csv(path)
     return FileResponse(path, filename=filename)
 
 
@@ -307,23 +307,44 @@ def render_receipt_overview(receipts, sort_by, show_empty):
         last_year = None
         for receipt in receipts:
             show_year = last_year != receipt.period.year
-            rows.append(render_receipt_row(receipt, sort_by, show_year))
-            last_year = receipt.period.year
+            row = render_receipt_row(receipt, sort_by, show_empty, show_year)
+            if row:
+                rows.append()
+                last_year = receipt.period.year
 
     elif sort_by == "period":
         receipts = sorted(receipts, key=lambda x: x.node_id)
         rows = [receipt_header_period()]
         for receipt in receipts:
-            rows.append(render_receipt_row(receipt, sort_by))
+            row = render_receipt_row(receipt, sort_by, show_empty)
+            if row:
+                rows.append(row)
 
     return Table(*rows, cls="hover")
 
 
-def render_receipt_row(node_period, sort_by="node", show_year=True):
+def render_receipt_row(node_period, sort_by, show_empty, show_year=True):
     node_id = node_period.node_id
     period = node_period.period
 
-    if node_period.has_receipt:
+    if not node_period.has_receipt:
+        minting_node = mintinglite(node_id, period)
+        if not minting_node or not minting_node.events:
+            # We have no receipts and no minting events for this node in this
+            # period. Either the node has been inactive or we don't have a
+            # tfchain db to read from. That makes this another case of an
+            # "empty" period, but we had to run mintinglite to know that since
+            # the receipts for this period haven't been published yet (or are
+            # missing due to some error)
+            if not show_empty:
+                return None
+            else:
+                uptime = None
+        else:
+            uptime = minting_node.uptime
+
+        reward = "Data not available"
+    else:
         if node_period.correct_receipt:
             receipt = node_period.correct_receipt
         elif node_period.minted_receipt:
@@ -334,13 +355,6 @@ def render_receipt_row(node_period, sort_by="node", show_year=True):
 
         uptime = receipt["measured_uptime"]
         reward = round(receipt["reward"]["tft"] / TFT_DIVISOR, 2)
-    else:
-        minting_node = mintinglite(node_id, period)
-        if minting_node:
-            uptime = minting_node.uptime
-        else:
-            uptime = None
-        reward = "Data not available"
 
     now = time.time()
     if now > period.end and uptime is not None:
@@ -392,7 +406,7 @@ def render_details(node_id, period_slug):
     )
 
     receipts = receipt_handler.get_node_period_receipts(node_id, period)
-    node = mintinglite(node_id, period)
+    minting_node = mintinglite(node_id, period)
     response = [H2(f"Node {node_id} - {period.month_name} {period.year}")]
     if receipts:
         receipts_by_hash = {}
@@ -422,7 +436,7 @@ def render_details(node_id, period_slug):
                 response.append(render_fixup_detail(receipt, "minted"))
         else:
             response.append(render_receipt_detail(receipt))
-    elif node:
+    elif minting_node:
         if time.time() < period.end:
             response.append(
                 Small(
@@ -443,13 +457,13 @@ def render_details(node_id, period_slug):
         response.append(Br())
         response.append(Br())
 
-        response.append(render_no_receipt_detail(node))
+        response.append(render_no_receipt_detail(minting_node))
     else:
         response.append(P("Data not available for this period"))
     response.append(Br())
 
     heading = H3("Uptime Events")
-    if node:
+    if minting_node:
         uptime_events = [
             Div(style="display: flex; align-items: baseline;")(
                 heading,
@@ -459,7 +473,7 @@ def render_details(node_id, period_slug):
                     download=True,
                 )("Download CSV"),
             ),
-            render_uptime_events(node),
+            render_uptime_events(minting_node),
         ]
     else:
         uptime_events = [
@@ -570,7 +584,7 @@ def render_no_receipt_detail(node):
     return Table(*rows)
 
 
-def render_uptime_events(node):
+def render_uptime_events(minting_node):
     header = Tr(
         *[
             Th(Strong(label))
@@ -585,7 +599,7 @@ def render_uptime_events(node):
         ]
     )
     rows = [header]
-    for e in node.events:
+    for e in minting_node.events:
         rows.append(Tr(*[Td(item) for item in e]))
     return Table(*rows)
 
