@@ -7,8 +7,8 @@
 git clone https://github.com/scottyeager/peppermint.git
 
 cd peppermint
-python3 -m venv venv
-source venv/bin/activate # Choose .fish for fish shell
+python3 -m venv .venv
+source .venv/bin/activate # Choose .fish for fish shell
 pip install python-fasthtml requests grid3
 
 python3 main.py
@@ -31,7 +31,7 @@ echo "LIVE_RELOAD = False" > config.py
 Then run it:
 
 ```
-source venv/bin/activate
+source .venv/bin/activate
 uvicorn main:app --host 0.0.0.0 --port 80 --workers 1
 ```
 

@@ -199,7 +199,7 @@ def render_main(
             )("Loading...")
         ]
 
-    title = "Fetch Minting Receipts"
+    title = "ThreeFold Minting Explorer"
     return (
         Title(title),
         Body(onload=onload, style="height: 100vh;")(
