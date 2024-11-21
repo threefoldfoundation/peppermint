@@ -76,7 +76,7 @@ def get(node_id: int, period_slug: str):
 
 @rt("/node/{node_id}")
 def get(req, node_id: int, show_empty: bool = False):
-    receipts = make_node_minting_periods(receipt_handler.get_node_receipts(node_id))
+    receipts = make_node_minting_periods(node_id, receipt_handler.get_node_receipts(node_id))
     if not receipts:
         results = "No receipts found."
     else:
@@ -309,7 +309,7 @@ def render_receipt_overview(receipts, sort_by, show_empty):
             show_year = last_year != receipt.period.year
             row = render_receipt_row(receipt, sort_by, show_empty, show_year)
             if row:
-                rows.append()
+                rows.append(row)
                 last_year = receipt.period.year
 
     elif sort_by == "period":
