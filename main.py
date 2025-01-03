@@ -1,5 +1,6 @@
 import concurrent.futures
 import logging
+import sqlite3
 
 logging.basicConfig(
     level=logging.WARNING,
@@ -82,14 +83,21 @@ def get(node_id: int, period_slug: str):
 
 @rt("/node/{node_id}")
 def get(req, node_id: int, show_empty: bool = False):
-    receipts = make_node_minting_periods(node_id, receipt_handler.get_node_receipts(node_id))
-    if not receipts:
-        results = "No receipts found."
-    else:
-        results = [
-            H2(f"Node {node_id}"),
-            render_receipt_overview(receipts, "node", show_empty),
-        ]
+    try:
+        receipts = make_node_minting_periods(node_id, receipt_handler.get_node_receipts(node_id))
+        if not receipts:
+            results = "No receipts found."
+        else:
+            results = [
+                H2(f"Node {node_id}"),
+                render_receipt_overview(receipts, "node", show_empty),
+            ]
+    except sqlite3.OperationalError as e:
+        if "database is locked" in str(e):
+            logging.warning(f"Database locked error while accessing node {node_id}")
+            results = P("The database is currently busy. Please try again in a few moments.")
+        else:
+            raise
 
     if "hx-request" in req.headers:
         return results
