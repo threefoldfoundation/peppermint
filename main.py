@@ -94,10 +94,14 @@ def get(req, node_id: int, show_empty: bool = False):
             ]
     except sqlite3.OperationalError as e:
         if "database is locked" in str(e):
-            logging.warning(f"Database locked error while accessing node {node_id}")
-            results = P("The database is currently busy. Please try again in a few moments.")
+            logging.error(f"Database locked error while accessing node {node_id}")
+            results = P("Error retrieving receipts data. Please try again.")
         else:
-            raise
+            logging.error(f"Database error while accessing node {node_id}: {str(e)}")
+            results = P("Error retrieving receipts data. Please try again.")
+    except Exception as e:
+        logging.error(f"Unexpected error while accessing node {node_id}: {str(e)}")
+        results = P("Error retrieving receipts data. Please try again.")
 
     if "hx-request" in req.headers:
         return results
@@ -107,25 +111,37 @@ def get(req, node_id: int, show_empty: bool = False):
 
 @rt("/farm/{farm_id}")
 def get(req, farm_id: int, sort_by: str = "node", show_empty: bool = False):
-    farm_receipts = fetch_farm_receipts(farm_id)
-    results = []
-    if sort_by == "node":
-        for node_id, receipts in farm_receipts:
-            if receipts:
-                results.append(H2(f"Node {node_id}"))
-                results.append(render_receipt_overview(receipts, sort_by, show_empty))
+    try:
+        farm_receipts = fetch_farm_receipts(farm_id)
+        results = []
+        if sort_by == "node":
+            for node_id, receipts in farm_receipts:
+                if receipts:
+                    results.append(H2(f"Node {node_id}"))
+                    results.append(render_receipt_overview(receipts, sort_by, show_empty))
 
-    elif sort_by == "period":
-        receipts_by_period = {}
-        for _, receipts in farm_receipts:
-            for receipt in receipts:
-                receipts_by_period.setdefault(receipt.period.offset, []).append(receipt)
-        for offset, receipts in reversed(sorted(receipts_by_period.items())):
-            period = Period(offset=offset)
-            results.append(H2(f"{period.month_name} {period.year}"))
-            results.append(render_receipt_overview(receipts, sort_by, show_empty))
-    if not results:
-        results = "No receipts found."
+        elif sort_by == "period":
+            receipts_by_period = {}
+            for _, receipts in farm_receipts:
+                for receipt in receipts:
+                    receipts_by_period.setdefault(receipt.period.offset, []).append(receipt)
+            for offset, receipts in reversed(sorted(receipts_by_period.items())):
+                period = Period(offset=offset)
+                results.append(H2(f"{period.month_name} {period.year}"))
+                results.append(render_receipt_overview(receipts, sort_by, show_empty))
+        if not results:
+            results = "No receipts found."
+
+    except sqlite3.OperationalError as e:
+        if "database is locked" in str(e):
+            logging.error(f"Database locked error while accessing farm {farm_id}")
+            results = P("Error retrieving receipts data. Please try again.")
+        else:
+            logging.error(f"Database error while accessing farm {farm_id}: {str(e)}")
+            results = P("Error retrieving receipts data. Please try again.")
+    except Exception as e:
+        logging.error(f"Unexpected error while accessing farm {farm_id}: {str(e)}")
+        results = P("Error retrieving receipts data. Please try again.")
 
     if "hx-request" in req.headers:
         return results
