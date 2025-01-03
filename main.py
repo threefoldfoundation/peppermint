@@ -1,4 +1,10 @@
 import concurrent.futures
+import logging
+
+logging.basicConfig(
+    level=logging.WARNING,
+    format='%(asctime)s - %(levelname)s - %(message)s'
+)
 import os
 import sqlite3
 import threading
@@ -637,7 +643,14 @@ def mintinglite(node_id, period):
     if not os.path.exists("tfchain.db"):
         return None
 
-    con = sqlite3.connect("tfchain.db")
+    try:
+        con = sqlite3.connect("tfchain.db")
+    except sqlite3.OperationalError as e:
+        if "database is locked" in str(e):
+            import logging
+            logging.warning(f"Database locked error while accessing node {node_id} for period {period}")
+            return None
+        raise
 
     # The code below probably adds a decent efficiency gain for periods where
     # we don't have the tfchain data (and that's currently quite a lot of the
