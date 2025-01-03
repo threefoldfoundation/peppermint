@@ -562,6 +562,9 @@ def render_fixup_detail(r, rtype):
 def render_no_receipt_detail(node):
     """For periods with no receipt yet, render a limited details table from the
     MintingNode data."""
+    if isinstance(node, dict) and "error" in node:
+        return P(node["error"])
+        
     rows = [
         Tr(
             Th(Strong("Period Start")),
@@ -647,9 +650,11 @@ def mintinglite(node_id, period):
         con = sqlite3.connect("tfchain.db")
     except sqlite3.OperationalError as e:
         if "database is locked" in str(e):
-            import logging
             logging.warning(f"Database locked error while accessing node {node_id} for period {period}")
-            return None
+            return {
+                "error": "The database is currently locked. Please try again in a few moments.",
+                "events": []
+            }
         raise
 
     # The code below probably adds a decent efficiency gain for periods where
