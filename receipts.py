@@ -1,11 +1,14 @@
+import concurrent.futures
 import json
 import sqlite3
 import time
+from typing import Set
 from contextlib import contextmanager
 from dataclasses import dataclass
 from queue import Queue
 from typing import Dict, List
 
+import grid3.network
 import requests
 from grid3.minting.period import Period
 
@@ -435,16 +438,44 @@ def example():
     print(f"Found {len(receipts)} stored receipts for node 42")
 
 def main():
-    '''
-    I want to update this project so that it runs as a daemon and scrapes all receipts from the alpha minting service. To do that we'll need to execute these steps:
+    mainnet = grid3.network.GridNetwork()
+    handler = ReceiptHandler()
+    
+    def scrape_node(node_id: int):
+        try:
+            handler.fetch_and_process_node(node_id)
+            return True
+        except Exception as e:
+            print(f"Error processing node {node_id}: {e}")
+            return False
 
-        1. Find all valid node ids. We can do this easily using graphql:
-            import grid3.network
-            mainnet = grid3.network.GridNetwork()
-            node_ids = mainnet.graphql.nodes(['nodeID'])
-        2. Scrape the receipts for all valid node ids and save them. Do this with a thread pool for efficiency
-        3. After the initial scrape, wait in a loop for new receipts to be published. We can just check a random valid node id every hour and see if there's a new receipt. If so, then we need to scrape all nodes again (getting a fresh list of valid node ids)
-    '''
+    def get_all_node_ids() -> Set[int]:
+        nodes = mainnet.graphql.nodes(['nodeID'])
+        return {int(node['nodeID']) for node in nodes}
+
+    # Initial scrape of all nodes
+    node_ids = get_all_node_ids()
+    print(f"Found {len(node_ids)} nodes to process")
+    
+    with concurrent.futures.ThreadPoolExecutor() as executor:
+        results = list(executor.map(scrape_node, node_ids))
+    
+    print(f"Initial scrape completed. {sum(results)} nodes processed successfully")
+    
+    # Continuous monitoring loop
+    while True:
+        time.sleep(3600)  # Wait 1 hour between checks
+        
+        # Check a random node for new receipts
+        sample_node = next(iter(node_ids))
+        last_period = handler.get_last_period_end(sample_node)
+        current_period = Period().end
+        
+        if last_period and last_period < current_period:
+            print("New period detected, rescanning all nodes")
+            node_ids = get_all_node_ids()  # Refresh node list
+            with concurrent.futures.ThreadPoolExecutor() as executor:
+                executor.map(scrape_node, node_ids)
 
 
 if __name__ == "__main__":
