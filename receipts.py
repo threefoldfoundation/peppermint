@@ -437,45 +437,45 @@ def example():
     receipts = handler.get_stored_node_receipts(42)
     print(f"Found {len(receipts)} stored receipts for node 42")
 
+def scrape_node(handler: ReceiptHandler, node_id: int):
+    try:
+        handler.fetch_and_process_node(node_id)
+        return True
+    except Exception as e:
+        print(f"Error processing node {node_id}: {e}")
+        return False
+
+def get_all_node_ids() -> Set[int]:
+    nodes = mainnet.graphql.nodes(['nodeID'])
+    return {int(node['nodeID']) for node in nodes}
+
 def main():
     mainnet = grid3.network.GridNetwork()
     handler = ReceiptHandler()
-    
-    def scrape_node(node_id: int):
-        try:
-            handler.fetch_and_process_node(node_id)
-            return True
-        except Exception as e:
-            print(f"Error processing node {node_id}: {e}")
-            return False
-
-    def get_all_node_ids() -> Set[int]:
-        nodes = mainnet.graphql.nodes(['nodeID'])
-        return {int(node['nodeID']) for node in nodes}
 
     # Initial scrape of all nodes
     node_ids = get_all_node_ids()
     print(f"Found {len(node_ids)} nodes to process")
-    
+
     with concurrent.futures.ThreadPoolExecutor() as executor:
-        results = list(executor.map(scrape_node, node_ids))
-    
+        results = list(executor.map(lambda node_id: scrape_node(handler, node_id), node_ids))
+
     print(f"Initial scrape completed. {sum(results)} nodes processed successfully")
-    
+
     # Continuous monitoring loop
     while True:
         time.sleep(3600)  # Wait 1 hour between checks
-        
+
         # Check a random node for new receipts
         sample_node = next(iter(node_ids))
         last_period = handler.get_last_period_end(sample_node)
         current_period = Period().end
-        
+
         if last_period and last_period < current_period:
             print("New period detected, rescanning all nodes")
             node_ids = get_all_node_ids()  # Refresh node list
             with concurrent.futures.ThreadPoolExecutor() as executor:
-                executor.map(scrape_node, node_ids)
+                executor.map(lambda node_id: scrape_node(handler, node_id), node_ids)
 
 
 if __name__ == "__main__":
