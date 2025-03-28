@@ -1,5 +1,6 @@
 import concurrent.futures
 import json
+import random
 import sqlite3
 import time
 from typing import Set
@@ -14,6 +15,9 @@ from grid3.minting.period import Period
 
 STANDARD_PERIOD_DURATION = 24 * 60 * 60 * (365 * 3 + 366 * 2) // 60
 ONE_HOUR = 60 * 60
+
+# With 50 workers, we can scrape ~7500 nodes in ~10 minutes
+SCRAPER_WORKERS = 50
 
 
 class ReceiptHandler:
@@ -55,6 +59,7 @@ class ReceiptHandler:
         finally:
             self.pool.put(conn)
 
+
     def init_db(self):
         """ "
         We store the period_end for each receipt because this is the data that's
@@ -93,6 +98,12 @@ class ReceiptHandler:
             """
             )
             conn.commit()
+
+    def is_database_empty(self) -> bool:
+        """Check if the receipts table is empty"""
+        with self.get_connection() as conn:
+            cursor = conn.execute("SELECT COUNT(*) FROM receipts")
+            return cursor.fetchone()[0] == 0
 
     def fetch_receipt(self, receipt_hash: str) -> Dict | None:
         """Fetch receipt from the API with a given hash."""
@@ -226,9 +237,9 @@ class ReceiptHandler:
 
         self.save_last_query_timestamp(node_id)
 
-        print(f"Successfully processed {len(receipts)} receipts for node {node_id}")
-        if last_period_end:
-            print(f"Latest timestamp: {last_period_end}")
+        # print(f"Successfully processed {len(receipts)} receipts for node {node_id}")
+        # if last_period_end:
+        #     print(f"Latest timestamp: {last_period_end}")
 
         return receipts
 
@@ -420,23 +431,6 @@ def make_node_minting_periods(node_id: int, receipts_input: List[Dict]) -> List[
 
     return period_receipts
 
-
-def example():
-    # Example usage
-    handler = ReceiptHandler()
-
-    # Process receipts for node 42
-    handler.fetch_and_process_node(42)
-
-    # Example of getting stored timestamp
-    timestamp = handler.get_last_period_end(42)
-    if timestamp:
-        print(f"Stored timestamp for node 42: {timestamp}")
-
-    # Example of getting stored receipts
-    receipts = handler.get_stored_node_receipts(42)
-    print(f"Found {len(receipts)} stored receipts for node 42")
-
 def scrape_node(handler: ReceiptHandler, node_id: int):
     try:
         handler.fetch_and_process_node(node_id)
@@ -445,46 +439,61 @@ def scrape_node(handler: ReceiptHandler, node_id: int):
         print(f"Error processing node {node_id}: {e}")
         return False
 
-def is_database_empty(self) -> bool:
-    """Check if the receipts table is empty"""
-    with self.get_connection() as conn:
-        cursor = conn.execute("SELECT COUNT(*) FROM receipts")
-        return cursor.fetchone()[0] == 0
+def scrape_nodes(handler: ReceiptHandler, node_ids: List[int]):
+    with concurrent.futures.ThreadPoolExecutor(max_workers=SCRAPER_WORKERS) as executor:
+        return list(executor.map(lambda node_id: scrape_node(handler, node_id), node_ids))
 
-def get_all_node_ids() -> Set[int]:
+def get_all_node_ids() -> List[int]:
+    mainnet = grid3.network.GridNetwork()
     nodes = mainnet.graphql.nodes(['nodeID'])
-    return {int(node['nodeID']) for node in nodes}
+    return [int(node['nodeID']) for node in nodes]
 
 def main():
-    mainnet = grid3.network.GridNetwork()
     handler = ReceiptHandler()
+    node_ids = get_all_node_ids()
 
     # Only do initial full scrape if database is empty
     if handler.is_database_empty():
-        node_ids = get_all_node_ids()
         print(f"Found {len(node_ids)} nodes to process")
 
-        with concurrent.futures.ThreadPoolExecutor() as executor:
-            results = list(executor.map(lambda node_id: scrape_node(handler, node_id), node_ids))
-
+        results = scrape_nodes(handler, node_ids)
         print(f"Initial scrape completed. {sum(results)} nodes processed successfully")
     else:
         print("Database already populated, skipping initial full scrape")
 
     # Continuous monitoring loop
     while True:
-        time.sleep(3600)  # Wait 1 hour between checks
+        time.sleep(600)  # Wait 10 minutes between checks
+        continue
 
         # Check a random node for new receipts
-        sample_node = next(iter(node_ids))
-        last_period = handler.get_last_period_end(sample_node)
-        current_period = Period().end
+        node_ids_shuffled = random.sample(node_ids, len(node_ids))  # Random selection order
 
-        if last_period and last_period < current_period:
-            print("New period detected, rescanning all nodes")
-            node_ids = get_all_node_ids()  # Refresh node list
-            with concurrent.futures.ThreadPoolExecutor() as executor:
-                executor.map(lambda node_id: scrape_node(handler, node_id), node_ids)
+        found_node = False
+        for sample_node in node_ids_shuffled:
+            last_period = handler.get_last_period_end(sample_node)
+            if last_period is not None and not handler.has_all_node_receipts(sample_node):
+                found_node = True
+                print(f"Checking node {sample_node} for new receipts...")
+
+                # Store original period end before fetching
+                original_period_end = last_period
+
+                # Fetch and process the node's receipts
+                handler.fetch_and_process_node(sample_node)
+
+                # Check if new period end is different
+                new_period_end = handler.get_last_period_end(sample_node)
+
+                if new_period_end is not None and new_period_end > original_period_end:
+                    node_ids = get_all_node_ids()  # Refresh node list
+                    print(f"New period detected (from {original_period_end} to {new_period_end}), rescanning all nodes")
+                    scrape_nodes(handler, node_ids)
+
+                break
+
+        if not found_node:
+            print("No nodes found that need receipt updates at this time")
 
 
 if __name__ == "__main__":
