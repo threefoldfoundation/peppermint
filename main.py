@@ -447,8 +447,8 @@ def render_details(node_id, period_slug):
                 fixup = receipt
 
         if fixup:
-            minted_receipt = receipts.get(fixup["minted_receipt"])
-            correct_receipt = receipts.get(fixup["correct_receipt"])
+            minted_receipt = receipt_handler.get_receipt(fixup["minted_receipt"])
+            correct_receipt = receipt_handler.get_receipt(fixup["correct_receipt"])
 
             # It's possible that either the minted_receipt or the
             # correct_receipt is missing from the receipt API. In that case,
@@ -588,7 +588,7 @@ def render_no_receipt_detail(node):
     MintingNode data."""
     if isinstance(node, dict) and "error" in node:
         return P(node["error"])
-        
+
     rows = [
         Tr(
             Th(Strong("Period Start")),
