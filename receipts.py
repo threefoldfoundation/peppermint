@@ -445,6 +445,12 @@ def scrape_node(handler: ReceiptHandler, node_id: int):
         print(f"Error processing node {node_id}: {e}")
         return False
 
+def is_database_empty(self) -> bool:
+    """Check if the receipts table is empty"""
+    with self.get_connection() as conn:
+        cursor = conn.execute("SELECT COUNT(*) FROM receipts")
+        return cursor.fetchone()[0] == 0
+
 def get_all_node_ids() -> Set[int]:
     nodes = mainnet.graphql.nodes(['nodeID'])
     return {int(node['nodeID']) for node in nodes}
@@ -453,14 +459,17 @@ def main():
     mainnet = grid3.network.GridNetwork()
     handler = ReceiptHandler()
 
-    # Initial scrape of all nodes
-    node_ids = get_all_node_ids()
-    print(f"Found {len(node_ids)} nodes to process")
+    # Only do initial full scrape if database is empty
+    if handler.is_database_empty():
+        node_ids = get_all_node_ids()
+        print(f"Found {len(node_ids)} nodes to process")
 
-    with concurrent.futures.ThreadPoolExecutor() as executor:
-        results = list(executor.map(lambda node_id: scrape_node(handler, node_id), node_ids))
+        with concurrent.futures.ThreadPoolExecutor() as executor:
+            results = list(executor.map(lambda node_id: scrape_node(handler, node_id), node_ids))
 
-    print(f"Initial scrape completed. {sum(results)} nodes processed successfully")
+        print(f"Initial scrape completed. {sum(results)} nodes processed successfully")
+    else:
+        print("Database already populated, skipping initial full scrape")
 
     # Continuous monitoring loop
     while True:
