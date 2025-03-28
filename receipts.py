@@ -418,7 +418,7 @@ def make_node_minting_periods(node_id: int, receipts_input: List[Dict]) -> List[
     return period_receipts
 
 
-def main():
+def example():
     # Example usage
     handler = ReceiptHandler()
 
@@ -433,6 +433,18 @@ def main():
     # Example of getting stored receipts
     receipts = handler.get_stored_node_receipts(42)
     print(f"Found {len(receipts)} stored receipts for node 42")
+
+def main():
+    '''
+    I want to update this project so that it runs as a daemon and scrapes all receipts from the alpha minting service. To do that we'll need to execute these steps:
+
+        1. Find all valid node ids. We can do this easily using graphql:
+            import grid3.network
+            mainnet = grid3.network.GridNetwork()
+            node_ids = mainnet.graphql.nodes(['nodeID'])
+        2. Scrape the receipts for all valid node ids and save them. Do this with a thread pool for efficiency
+        3. After the initial scrape, wait in a loop for new receipts to be published. We can just check a random valid node id every hour and see if there's a new receipt. If so, then we need to scrape all nodes again (getting a fresh list of valid node ids)
+    '''
 
 
 if __name__ == "__main__":
