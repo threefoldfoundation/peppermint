@@ -1,10 +1,10 @@
 import sqlite3
 import json
+import time
 from typing import List, Dict, Tuple
 from grid3.minting.period import Period
+from grid3.network import GridNetwork
 from receipts import NodeMintingPeriod, make_node_minting_periods
-
-TFT_DIVISOR = 1e7  # Number of decimal places, as used on tfchain
 
 def get_all_node_ids(db_path: str = "receipts.db") -> List[int]:
     """Get all unique node IDs from receipts table"""
@@ -28,7 +28,7 @@ def calculate_node_uptime(node_period: NodeMintingPeriod) -> float:
         receipt = node_period.minted_receipt
     else:
         return 0.0  # No receipt available
-    
+
     return receipt["measured_uptime"]
 
 def calculate_average_uptime(node_id: int, db_path: str = "receipts.db") -> float:
@@ -36,29 +36,37 @@ def calculate_average_uptime(node_id: int, db_path: str = "receipts.db") -> floa
     receipts = get_node_receipts(db_path, node_id)
     if not receipts:
         return 0.0
-    
+
     periods = make_node_minting_periods(node_id, receipts)
     total_uptime = 0.0
     valid_periods = 0
-    
+
     for period in periods:
         uptime = calculate_node_uptime(period)
         if uptime > 0:  # Only count periods with valid uptime
             total_uptime += uptime
             valid_periods += 1
-    
+
     return total_uptime / valid_periods if valid_periods > 0 else 0.0
 
 def rank_nodes(db_path: str = "receipts.db") -> List[Tuple[int, float]]:
     """Rank all nodes by their average uptime"""
-    node_ids = get_all_node_ids(db_path)
+    # node_ids = get_all_node_ids(db_path)
+    mainnet = GridNetwork()
+    nodes = mainnet.graphql.nodes(["nodeID"], updatedAt_gt=int(time.time() - 24 * 60 * 60))
+    node_ids = [n["nodeID"] for n in nodes]
     ranked_nodes = []
-    
+
+    count = 0
     for node_id in node_ids:
         avg_uptime = calculate_average_uptime(node_id, db_path)
         if avg_uptime > 0:  # Only include nodes with some uptime
             ranked_nodes.append((node_id, avg_uptime))
-    
+
+        count += 1
+        if count % 100 == 0:
+            print(f"Processed {count} nodes")
+
     # Sort by average uptime descending
     ranked_nodes.sort(key=lambda x: x[1], reverse=True)
     return ranked_nodes
