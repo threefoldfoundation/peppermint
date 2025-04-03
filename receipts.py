@@ -78,10 +78,10 @@ class ReceiptHandler:
                     receipt_type TEXT,
                     receipt_data TEXT,
                     period_end INTEGER
-                );
-                CREATE INDEX IF NOT EXISTS receipts_node_id_idx ON receipts(node_id)
+                )
             """
             )
+            conn.execute("CREATE INDEX IF NOT EXISTS receipts_node_id_idx ON receipts(node_id)")
             conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS node_last_period_end (
