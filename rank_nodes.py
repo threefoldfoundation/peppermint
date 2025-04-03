@@ -21,7 +21,7 @@ def get_node_receipts(db_path: str, node_id: int) -> List[Dict]:
     return [json.loads(row[0]) for row in cursor.fetchall()]
 
 def calculate_node_uptime(node_period: NodeMintingPeriod) -> float:
-    """Calculate uptime for a single node period"""
+    """Calculate uptime percentage for a single node period"""
     if node_period.correct_receipt:
         receipt = node_period.correct_receipt
     elif node_period.minted_receipt:
@@ -29,7 +29,9 @@ def calculate_node_uptime(node_period: NodeMintingPeriod) -> float:
     else:
         return 0.0  # No receipt available
 
-    return receipt["measured_uptime"]
+    # Calculate uptime percentage by dividing measured uptime by period duration
+    period_duration = receipt["period"]["end"] - receipt["period"]["start"]
+    return receipt["measured_uptime"] / period_duration
 
 def calculate_average_uptime(node_id: int, db_path: str = "receipts.db") -> float:
     """Calculate average uptime for a node across all periods"""
