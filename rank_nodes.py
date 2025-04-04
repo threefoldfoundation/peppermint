@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import List, Dict, Tuple
 from grid3.minting.period import Period, STANDARD_PERIOD_DURATION
 from grid3.network import GridNetwork
-from receipts import NodeMintingPeriod, make_node_minting_periods, format_duration
+from receipts import NodeMintingPeriod, make_node_minting_periods
 
 def get_all_node_ids(db_path: str = "receipts.db") -> List[int]:
     """Get all unique node IDs from receipts table"""
@@ -166,7 +166,7 @@ def generate_html(ranked_nodes: List[Tuple[int, float, float]], output_path: str
                 <td class="rank">{rank}</td>
                 <td><a href="/node/{node_id}">{node_id}</a></td>
                 <td class="uptime">{uptime:.2%}</td>
-                <td class="uptime">{format_duration(total_uptime)}</td>
+                <td class="uptime">{int(total_uptime)} seconds</td>
             </tr>
 """
 
@@ -191,21 +191,9 @@ def generate_html(ranked_nodes: List[Tuple[int, float, float]], output_path: str
                     y = parseFloat(y);
                     return isAsc ? x - y : y - x;
                 }} else {{
-                    // Sort durations for total uptime
-                    const parseDuration = (str) => {{
-                        const parts = str.split(' ');
-                        let seconds = 0;
-                        for (let i = 0; i < parts.length; i += 2) {{
-                            const val = parseFloat(parts[i]);
-                            const unit = parts[i+1];
-                            if (unit.includes('day')) seconds += val * 86400;
-                            else if (unit.includes('hour')) seconds += val * 3600;
-                            else if (unit.includes('minute')) seconds += val * 60;
-                        }}
-                        return seconds;
-                    }};
-                    x = parseDuration(x);
-                    y = parseDuration(y);
+                    // Sort raw seconds for total uptime
+                    x = parseInt(x);
+                    y = parseInt(y);
                     return isAsc ? x - y : y - x;
                 }}
             }});
@@ -245,4 +233,4 @@ if __name__ == "__main__":
         print("Rank\tNode ID\t\tAverage Uptime")
         print("----------------------------------")
         for rank, (node_id, uptime, total_uptime) in enumerate(rankings[:args.top], 1):
-            print(f"{rank}\t{node_id}\t{uptime:.2%}\t{format_duration(total_uptime)}")
+            print(f"{rank}\t{node_id}\t{uptime:.2%}\t{int(total_uptime)} seconds")
