@@ -187,7 +187,7 @@ def generate_html(ranked_nodes: List[Tuple[int, int, float, float, float]], outp
         <tbody>
 """
 
-    for node_id, farm_id, uptime, total_uptime in ranked_nodes[:top_n] if top_n is not None else ranked_nodes:
+    for node_id, farm_id, uptime, total_uptime, relative_uptime in ranked_nodes[:top_n] if top_n is not None else ranked_nodes:
         html += f"""            <tr>
                 <td><a href="/node/{node_id}">{node_id}</a></td>
                 <td><a href="/farm/{farm_id}">{farm_id}</a></td>
