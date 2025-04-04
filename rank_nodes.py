@@ -125,9 +125,21 @@ def generate_html(ranked_nodes: List[Tuple[int, float, float]], output_path: str
             cursor: pointer;
             background-color: #f8f8f8;
             font-weight: bold;
+            position: relative;
         }}
         th:hover {{
             background-color: #eee;
+        }}
+        th.sorted-asc::after {{
+            content: " ↑";
+            color: #666;
+        }}
+        th.sorted-desc::after {{
+            content: " ↓";
+            color: #666;
+        }}
+        th.active {{
+            background-color: #e0e0e0;
         }}
         tr:hover td {{
             background-color: #f5f5f5;
@@ -168,11 +180,30 @@ def generate_html(ranked_nodes: List[Tuple[int, float, float]], output_path: str
     html += f"""        </tbody>
     </table>
     <script>
+        let currentSort = {{
+            column: 1, // Default sort by average uptime
+            direction: 'desc' // Default descending
+        }};
+
         function sortTable(column) {{
             const table = document.getElementById("rankingTable");
             const rows = Array.from(table.rows).slice(1); // Skip header
-            const isAsc = table.getAttribute("data-sort-asc") === "true";
+            const headers = table.rows[0].cells;
+            
+            // Determine sort direction
+            let isAsc;
+            if (column === currentSort.column) {{
+                isAsc = currentSort.direction === 'asc';
+            }} else {{
+                isAsc = false; // Default to descending for new column
+            }}
 
+            // Clear previous sort indicators
+            for (let i = 0; i < headers.length; i++) {{
+                headers[i].classList.remove('sorted-asc', 'sorted-desc', 'active');
+            }}
+
+            // Sort rows
             rows.sort((a, b) => {{
                 let x = a.cells[column].textContent;
                 let y = b.cells[column].textContent;
@@ -195,8 +226,19 @@ def generate_html(ranked_nodes: List[Tuple[int, float, float]], output_path: str
 
             // Rebuild table with sorted rows
             table.tBodies[0].append(...rows);
-            table.setAttribute("data-sort-asc", !isAsc);
+            
+            // Update sort indicators
+            currentSort = {{
+                column: column,
+                direction: isAsc ? 'desc' : 'asc'
+            }};
+            headers[column].classList.add('active', isAsc ? 'sorted-asc' : 'sorted-desc');
         }}
+
+        // Initialize with default sort
+        document.addEventListener('DOMContentLoaded', () => {{
+            sortTable(currentSort.column);
+        }});
     </script>
 </body>
 </html>"""
