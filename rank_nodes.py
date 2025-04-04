@@ -128,6 +128,34 @@ def generate_html(ranked_nodes: List[Tuple[int, int, float, float, float]], outp
             margin: 2em;
             line-height: 1.6;
         }}
+        .sort-controls {{
+            display: flex;
+            justify-content: flex-end;
+            align-items: center;
+            gap: 1em;
+            margin-bottom: 1em;
+        }}
+        .slider-container {{
+            display: flex;
+            align-items: center;
+            gap: 0.5em;
+        }}
+        .slider-labels {{
+            display: flex;
+            justify-content: space-between;
+            width: 200px;
+        }}
+        button {{
+            padding: 0.5em 1em;
+            background-color: #0066cc;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+        }}
+        button:hover {{
+            background-color: #0055aa;
+        }}
         table {{
             border-collapse: collapse;
             width: 100%;
@@ -175,6 +203,14 @@ def generate_html(ranked_nodes: List[Tuple[int, int, float, float, float]], outp
 </head>
 <body>
     <h1>{'Top ' + str(display_count) + ' ' if top_n is not None else ''}Nodes by Average Uptime</h1>
+    <div class="sort-controls">
+        <div class="slider-container">
+            <span>Average Uptime</span>
+            <input type="range" min="0" max="100" value="0" class="sort-slider">
+            <span>Total Uptime</span>
+        </div>
+        <button onclick="applySort()">Apply Sort</button>
+    </div>
     <table id="rankingTable">
         <thead>
             <tr>
@@ -255,6 +291,15 @@ def generate_html(ranked_nodes: List[Tuple[int, int, float, float, float]], outp
                 direction: isAsc ? 'desc' : 'asc'
             }};
             headers[column].classList.add('active', isAsc ? 'sorted-asc' : 'sorted-desc');
+        }}
+
+        function applySort() {{
+            const slider = document.querySelector('.sort-slider');
+            if (slider.value < 50) {{
+                sortTable(2); // Sort by average uptime
+            }} else {{
+                sortTable(3); // Sort by total uptime
+            }}
         }}
 
         // Initialize with default sort
