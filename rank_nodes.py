@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import List, Dict, Tuple
 from grid3.minting.period import Period, STANDARD_PERIOD_DURATION
 from grid3.network import GridNetwork
-from receipts import NodeMintingPeriod, make_node_minting_periods
+from receipts import NodeMintingPeriod, make_node_minting_periods, format_duration
 
 def get_all_node_ids(db_path: str = "receipts.db") -> List[int]:
     """Get all unique node IDs from receipts table"""
@@ -161,7 +161,7 @@ def generate_html(ranked_nodes: List[Tuple[int, float, float]], output_path: str
         <tbody>
 """
 
-    for rank, (node_id, uptime) in enumerate(ranked_nodes[:top_n], 1):
+    for rank, (node_id, uptime, total_uptime) in enumerate(ranked_nodes[:top_n], 1):
         html += f"""            <tr>
                 <td class="rank">{rank}</td>
                 <td><a href="/node/{node_id}">{node_id}</a></td>
@@ -244,5 +244,5 @@ if __name__ == "__main__":
         print(f"Top {args.top} Nodes by Average Uptime:")
         print("Rank\tNode ID\t\tAverage Uptime")
         print("----------------------------------")
-        for rank, (node_id, uptime) in enumerate(rankings[:args.top], 1):
+        for rank, (node_id, uptime, total_uptime) in enumerate(rankings[:args.top], 1):
             print(f"{rank}\t{node_id}\t{uptime:.2%}\t{format_duration(total_uptime)}")
