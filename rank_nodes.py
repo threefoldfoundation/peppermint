@@ -2,7 +2,7 @@ import sqlite3
 import json
 import time
 from typing import List, Dict, Tuple
-from grid3.minting.period import Period
+from grid3.minting.period import Period, STANDARD_PERIOD_DURATION
 from grid3.network import GridNetwork
 from receipts import NodeMintingPeriod, make_node_minting_periods
 
@@ -26,8 +26,6 @@ def calculate_node_uptime(node_period: NodeMintingPeriod) -> float:
         receipt = node_period.correct_receipt
     elif node_period.minted_receipt:
         receipt = node_period.minted_receipt
-    else:
-        return 0.0  # No receipt available
 
     # Calculate uptime percentage by dividing measured uptime by period duration
     period_duration = receipt["period"]["end"] - receipt["period"]["start"]
@@ -44,10 +42,26 @@ def calculate_average_uptime(node_id: int, db_path: str = "receipts.db") -> floa
     valid_periods = 0
 
     for period in periods:
+        if not period.minted_receipt and not period.correct_receipt:
+            continue
+
         uptime = calculate_node_uptime(period)
-        if uptime > 0:  # Only count periods with valid uptime
+
+        # For $REASON, some uptimes are up to 2% or so above the associated
+        # period duration. For $OTHER_REASON, some uptimes are upto about 50%
+        # off, during the node's first period in the example I checked. We
+        # normalize these to 100% and also throw out anything that's way out of
+        # range, since for $YET_ANOTHER_REASON, some uptime figures are hugely
+        # inflated.
+        if 1 < uptime <= 2:
+            total_uptime += 1
+            valid_periods += 1
+        elif uptime <= 1:
             total_uptime += uptime
             valid_periods += 1
+
+        if node_id == 1:
+            print(uptime, total_uptime, valid_periods)
 
     return total_uptime / valid_periods if valid_periods > 0 else 0.0
 
