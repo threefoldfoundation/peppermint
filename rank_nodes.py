@@ -33,21 +33,26 @@ def calculate_node_uptime(node_period: NodeMintingPeriod) -> float:
     period_duration = receipt["period"]["end"] - receipt["period"]["start"]
     return receipt["measured_uptime"] / period_duration
 
-def calculate_average_uptime(node_id: int, db_path: str = "receipts.db") -> float:
-    """Calculate average uptime for a node across all periods"""
+def calculate_uptime_stats(node_id: int, db_path: str = "receipts.db") -> Tuple[float, float]:
+    """Calculate uptime statistics for a node across all periods.
+    Returns tuple of (average_uptime_percentage, total_uptime_seconds)"""
     receipts = get_node_receipts(db_path, node_id)
     if not receipts:
-        return 0.0
+        return (0.0, 0.0)
 
     periods = make_node_minting_periods(node_id, receipts)
-    total_uptime = 0.0
+    total_uptime_percentage = 0.0
+    total_uptime_seconds = 0.0
     valid_periods = 0
 
     for period in periods:
         if not period.minted_receipt and not period.correct_receipt:
             continue
 
-        uptime = calculate_node_uptime(period)
+        receipt = period.correct_receipt or period.minted_receipt
+        uptime_seconds = receipt["measured_uptime"]
+        period_duration = receipt["period"]["end"] - receipt["period"]["start"]
+        uptime_percentage = uptime_seconds / period_duration
 
         # For $REASON, some uptimes are up to 2% or so above the associated
         # period duration. For $OTHER_REASON, some uptimes are upto about 50%
@@ -55,17 +60,20 @@ def calculate_average_uptime(node_id: int, db_path: str = "receipts.db") -> floa
         # normalize these to 100% and also throw out anything that's way out of
         # range, since for $YET_ANOTHER_REASON, some uptime figures are hugely
         # inflated.
-        if 1 < uptime <= 2:
-            total_uptime += 1
+        if 1 < uptime_percentage <= 2:
+            total_uptime_percentage += 1
+            total_uptime_seconds += period_duration
             valid_periods += 1
-        elif uptime <= 1:
-            total_uptime += uptime
+        elif uptime_percentage <= 1:
+            total_uptime_percentage += uptime_percentage
+            total_uptime_seconds += uptime_seconds
             valid_periods += 1
 
-    return total_uptime / valid_periods if valid_periods > 0 else 0.0
+    avg_uptime = total_uptime_percentage / valid_periods if valid_periods > 0 else 0.0
+    return (avg_uptime, total_uptime_seconds)
 
-def rank_nodes(db_path: str = "receipts.db", node_ids: List[int] = None) -> List[Tuple[int, float]]:
-    """Rank nodes by their average uptime
+def rank_nodes(db_path: str = "receipts.db", node_ids: List[int] = None) -> List[Tuple[int, float, float]]:
+    """Rank nodes by their average uptime and total uptime
 
     Args:
         db_path: Path to receipts database
@@ -79,9 +87,9 @@ def rank_nodes(db_path: str = "receipts.db", node_ids: List[int] = None) -> List
 
     count = 0
     for node_id in node_ids:
-        avg_uptime = calculate_average_uptime(node_id, db_path)
+        avg_uptime, total_uptime = calculate_uptime_stats(node_id, db_path)
         if avg_uptime > 0:  # Only include nodes with some uptime
-            ranked_nodes.append((node_id, avg_uptime))
+            ranked_nodes.append((node_id, avg_uptime, total_uptime))
 
         count += 1
         if count % 100 == 0:
@@ -91,7 +99,7 @@ def rank_nodes(db_path: str = "receipts.db", node_ids: List[int] = None) -> List
     ranked_nodes.sort(key=lambda x: x[1], reverse=True)
     return ranked_nodes
 
-def generate_html(ranked_nodes: List[Tuple[int, float]], output_path: str = "rankings.html", top_n: int = 50):
+def generate_html(ranked_nodes: List[Tuple[int, float, float]], output_path: str = "rankings.html", top_n: int = 50):
     """Generate an HTML file with sortable table of rankings"""
     html = f"""<!DOCTYPE html>
 <html>
@@ -147,6 +155,7 @@ def generate_html(ranked_nodes: List[Tuple[int, float]], output_path: str = "ran
                 <th onclick="sortTable(0)">Rank</th>
                 <th onclick="sortTable(1)">Node ID</th>
                 <th onclick="sortTable(2)">Average Uptime</th>
+                <th onclick="sortTable(3)">Total Uptime</th>
             </tr>
         </thead>
         <tbody>
@@ -157,6 +166,7 @@ def generate_html(ranked_nodes: List[Tuple[int, float]], output_path: str = "ran
                 <td class="rank">{rank}</td>
                 <td><a href="/node/{node_id}">{node_id}</a></td>
                 <td class="uptime">{uptime:.2%}</td>
+                <td class="uptime">{format_duration(total_uptime)}</td>
             </tr>
 """
 
@@ -175,10 +185,27 @@ def generate_html(ranked_nodes: List[Tuple[int, float]], output_path: str = "ran
                 if (column === 0 || column === 1) {{
                     // Sort numbers for rank and node ID
                     return isAsc ? Number(x) - Number(y) : Number(y) - Number(x);
-                }} else {{
-                    // Sort percentages for uptime
+                }} else if (column === 2) {{
+                    // Sort percentages for average uptime
                     x = parseFloat(x);
                     y = parseFloat(y);
+                    return isAsc ? x - y : y - x;
+                }} else {{
+                    // Sort durations for total uptime
+                    const parseDuration = (str) => {{
+                        const parts = str.split(' ');
+                        let seconds = 0;
+                        for (let i = 0; i < parts.length; i += 2) {{
+                            const val = parseFloat(parts[i]);
+                            const unit = parts[i+1];
+                            if (unit.includes('day')) seconds += val * 86400;
+                            else if (unit.includes('hour')) seconds += val * 3600;
+                            else if (unit.includes('minute')) seconds += val * 60;
+                        }}
+                        return seconds;
+                    }};
+                    x = parseDuration(x);
+                    y = parseDuration(y);
                     return isAsc ? x - y : y - x;
                 }}
             }});
@@ -218,4 +245,4 @@ if __name__ == "__main__":
         print("Rank\tNode ID\t\tAverage Uptime")
         print("----------------------------------")
         for rank, (node_id, uptime) in enumerate(rankings[:args.top], 1):
-            print(f"{rank}\t{node_id}\t{uptime:.2%}")
+            print(f"{rank}\t{node_id}\t{uptime:.2%}\t{format_duration(total_uptime)}")
