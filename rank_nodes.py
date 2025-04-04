@@ -1,6 +1,7 @@
 import sqlite3
 import json
 import time
+import argparse
 from typing import List, Dict, Tuple
 from grid3.minting.period import Period, STANDARD_PERIOD_DURATION
 from grid3.network import GridNetwork
@@ -65,12 +66,17 @@ def calculate_average_uptime(node_id: int, db_path: str = "receipts.db") -> floa
 
     return total_uptime / valid_periods if valid_periods > 0 else 0.0
 
-def rank_nodes(db_path: str = "receipts.db") -> List[Tuple[int, float]]:
-    """Rank all nodes by their average uptime"""
-    # node_ids = get_all_node_ids(db_path)
-    mainnet = GridNetwork()
-    nodes = mainnet.graphql.nodes(["nodeID"], updatedAt_gt=int(time.time() - 24 * 60 * 60))
-    node_ids = [n["nodeID"] for n in nodes]
+def rank_nodes(db_path: str = "receipts.db", node_ids: List[int] = None) -> List[Tuple[int, float]]:
+    """Rank nodes by their average uptime
+    
+    Args:
+        db_path: Path to receipts database
+        node_ids: Optional list of node IDs to rank. If None, ranks all active nodes.
+    """
+    if node_ids is None:
+        mainnet = GridNetwork()
+        nodes = mainnet.graphql.nodes(["nodeID"], updatedAt_gt=int(time.time() - 24 * 60 * 60))
+        node_ids = [n["nodeID"] for n in nodes]
     ranked_nodes = []
 
     count = 0
@@ -96,5 +102,13 @@ def print_rankings(ranked_nodes: List[Tuple[int, float]], top_n: int = 50):
         print(f"{rank}\t{node_id}\t{uptime:.2%}")
 
 if __name__ == "__main__":
-    rankings = rank_nodes()
+    parser = argparse.ArgumentParser(description='Rank nodes by uptime')
+    parser.add_argument('node_ids', nargs='*', type=int, 
+                       help='Optional node IDs to rank (default: rank all active nodes)')
+    args = parser.parse_args()
+
+    if args.node_ids:
+        rankings = rank_nodes(node_ids=args.node_ids)
+    else:
+        rankings = rank_nodes()
     print_rankings(rankings)
