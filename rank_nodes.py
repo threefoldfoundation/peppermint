@@ -88,18 +88,13 @@ def rank_nodes(db_path: str = "receipts.db", node_ids: List[int] = None) -> List
         mainnet = GridNetwork()
         nodes = mainnet.graphql.nodes(["nodeID", "farmID"], nodeID_in=node_ids)
         node_farms = {n["nodeID"]: n["farmID"] for n in nodes}
-    
+
     ranked_nodes = []
 
-    count = 0
     for node_id in node_ids:
         avg_uptime, total_uptime = calculate_uptime_stats(node_id, db_path)
         if avg_uptime > 0:  # Only include nodes with some uptime
             ranked_nodes.append((node_id, node_farms.get(node_id, 0), avg_uptime, total_uptime))
-
-        count += 1
-        if count % 100 == 0:
-            print(f"Processed {count} nodes")
 
     # Sort by average uptime descending
     ranked_nodes.sort(key=lambda x: x[1], reverse=True)
@@ -107,7 +102,7 @@ def rank_nodes(db_path: str = "receipts.db", node_ids: List[int] = None) -> List
 
 def generate_html(ranked_nodes: List[Tuple[int, int, float, float]], output_path: str = "rankings.html", top_n: int = None):
     """Generate an HTML file with sortable table of rankings
-    
+
     Args:
         ranked_nodes: List of (node_id, avg_uptime, total_uptime) tuples
         output_path: Path to save HTML file
@@ -204,7 +199,7 @@ def generate_html(ranked_nodes: List[Tuple[int, int, float, float]], output_path
             const table = document.getElementById("rankingTable");
             const rows = Array.from(table.rows).slice(1); // Skip header
             const headers = table.rows[0].cells;
-            
+
             // Determine sort direction
             let isAsc;
             if (column === currentSort.column) {{
@@ -241,7 +236,7 @@ def generate_html(ranked_nodes: List[Tuple[int, int, float, float]], output_path
 
             // Rebuild table with sorted rows
             table.tBodies[0].append(...rows);
-            
+
             // Update sort indicators
             currentSort = {{
                 column: column,
