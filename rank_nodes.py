@@ -132,9 +132,6 @@ def generate_html(ranked_nodes: List[Tuple[int, float, float]], output_path: str
         tr:hover td {{
             background-color: #f5f5f5;
         }}
-        .rank {{
-            width: 80px;
-        }}
         .uptime {{
             width: 150px;
         }}
@@ -152,18 +149,16 @@ def generate_html(ranked_nodes: List[Tuple[int, float, float]], output_path: str
     <table id="rankingTable">
         <thead>
             <tr>
-                <th onclick="sortTable(0)">Rank</th>
-                <th onclick="sortTable(1)">Node ID</th>
-                <th onclick="sortTable(2)">Average Uptime</th>
-                <th onclick="sortTable(3)">Total Uptime</th>
+                <th onclick="sortTable(0)">Node ID</th>
+                <th onclick="sortTable(1)">Average Uptime</th>
+                <th onclick="sortTable(2)">Total Uptime</th>
             </tr>
         </thead>
         <tbody>
 """
 
-    for rank, (node_id, uptime, total_uptime) in enumerate(ranked_nodes[:top_n], 1):
+    for node_id, uptime, total_uptime in ranked_nodes[:top_n]:
         html += f"""            <tr>
-                <td class="rank">{rank}</td>
                 <td><a href="/node/{node_id}">{node_id}</a></td>
                 <td class="uptime">{uptime:.2%}</td>
                 <td class="uptime">{int(total_uptime)} seconds</td>
@@ -182,10 +177,10 @@ def generate_html(ranked_nodes: List[Tuple[int, float, float]], output_path: str
                 let x = a.cells[column].textContent;
                 let y = b.cells[column].textContent;
 
-                if (column === 0 || column === 1) {{
-                    // Sort numbers for rank and node ID
+                if (column === 0) {{
+                    // Sort numbers for node ID
                     return isAsc ? Number(x) - Number(y) : Number(y) - Number(x);
-                }} else if (column === 2) {{
+                }} else if (column === 1) {{
                     // Sort percentages for average uptime
                     x = parseFloat(x);
                     y = parseFloat(y);
