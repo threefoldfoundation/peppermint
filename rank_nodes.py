@@ -3,7 +3,6 @@ import json
 import time
 import argparse
 from pathlib import Path
-from lightdark import atag, AutoLink, LightDarkScript
 from typing import List, Dict, Tuple
 from grid3.minting.period import Period, STANDARD_PERIOD_DURATION
 from grid3.network import GridNetwork
@@ -102,22 +101,28 @@ def generate_html(ranked_nodes: List[Tuple[int, float]], output_path: str = "ran
         body {{
             font-family: sans-serif;
             margin: 2em;
+            line-height: 1.6;
         }}
         table {{
             border-collapse: collapse;
             width: 100%;
+            margin: 1em 0;
         }}
         th, td {{
-            padding: 8px;
+            padding: 8px 12px;
             text-align: left;
             border-bottom: 1px solid #ddd;
         }}
         th {{
             cursor: pointer;
-            background-color: #f2f2f2;
+            background-color: #f8f8f8;
+            font-weight: bold;
         }}
         th:hover {{
-            background-color: #e6e6e6;
+            background-color: #eee;
+        }}
+        tr:hover td {{
+            background-color: #f5f5f5;
         }}
         .rank {{
             width: 80px;
@@ -125,8 +130,14 @@ def generate_html(ranked_nodes: List[Tuple[int, float]], output_path: str = "ran
         .uptime {{
             width: 150px;
         }}
+        a {{
+            color: #0066cc;
+            text-decoration: none;
+        }}
+        a:hover {{
+            text-decoration: underline;
+        }}
     </style>
-    {LightDarkScript()}
 </head>
 <body>
     <h1>Top {min(top_n, len(ranked_nodes))} Nodes by Average Uptime</h1>
@@ -144,7 +155,7 @@ def generate_html(ranked_nodes: List[Tuple[int, float]], output_path: str = "ran
     for rank, (node_id, uptime) in enumerate(ranked_nodes[:top_n], 1):
         html += f"""            <tr>
                 <td class="rank">{rank}</td>
-                <td>{AutoLink(str(node_id), href=f"/node/{node_id}")}</td>
+                <td><a href="/node/{node_id}">{node_id}</a></td>
                 <td class="uptime">{uptime:.2%}</td>
             </tr>
 """
