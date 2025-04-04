@@ -140,6 +140,21 @@ def generate_html(ranked_nodes: List[Tuple[int, int, float, float, float]], outp
             align-items: center;
             gap: 0.5em;
         }}
+        input[type="range"] {{
+            -webkit-appearance: none;
+            width: 200px;
+            height: 4px;
+            background: #ddd;
+            border-radius: 2px;
+        }}
+        input[type="range"]::-webkit-slider-thumb {{
+            -webkit-appearance: none;
+            width: 16px;
+            height: 16px;
+            background: #0066cc;
+            border-radius: 50%;
+            cursor: pointer;
+        }}
         .slider-labels {{
             display: flex;
             justify-content: space-between;
