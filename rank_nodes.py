@@ -231,14 +231,17 @@ def generate_html(ranked_nodes: List[Tuple[int, int, float, float, float]], outp
                     // Sort numbers for node ID
                     return isAsc ? Number(x) - Number(y) : Number(y) - Number(x);
                 }} else if (column === 1) {{
+                    // Sort numbers for farm ID
+                    return isAsc ? Number(x) - Number(y) : Number(y) - Number(x);
+                }} else if (column === 2) {{
                     // Sort percentages for average uptime
-                    x = parseFloat(x);
-                    y = parseFloat(y);
+                    x = parseFloat(x.replace('%', ''));
+                    y = parseFloat(y.replace('%', ''));
                     return isAsc ? x - y : y - x;
                 }} else {{
-                    // Sort raw seconds for total uptime
-                    x = parseInt(x);
-                    y = parseInt(y);
+                    // Sort percentages for relative uptime
+                    x = parseFloat(x.replace('% of max', ''));
+                    y = parseFloat(y.replace('% of max', ''));
                     return isAsc ? x - y : y - x;
                 }}
             }});
