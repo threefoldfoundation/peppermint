@@ -226,6 +226,9 @@ def generate_html(ranked_nodes: List[Tuple[int, int, float, float, float]], outp
         </div>
         <button onclick="applySort()">Apply Sort</button>
     </div>
+    <p style="text-align: right; margin-top: 0; color: #666; font-size: 0.9em;">
+        Adjust the slider to balance between average uptime and total uptime when ranking nodes.
+    </p>
     <table id="rankingTable">
         <thead>
             <tr>
