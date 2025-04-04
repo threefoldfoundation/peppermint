@@ -63,14 +63,11 @@ def calculate_average_uptime(node_id: int, db_path: str = "receipts.db") -> floa
             total_uptime += uptime
             valid_periods += 1
 
-        if node_id == 1:
-            print(uptime, total_uptime, valid_periods)
-
     return total_uptime / valid_periods if valid_periods > 0 else 0.0
 
 def rank_nodes(db_path: str = "receipts.db", node_ids: List[int] = None) -> List[Tuple[int, float]]:
     """Rank nodes by their average uptime
-    
+
     Args:
         db_path: Path to receipts database
         node_ids: Optional list of node IDs to rank. If None, ranks all active nodes.
@@ -159,11 +156,11 @@ def generate_html(ranked_nodes: List[Tuple[int, float]], output_path: str = "ran
             const table = document.getElementById("rankingTable");
             const rows = Array.from(table.rows).slice(1); // Skip header
             const isAsc = table.getAttribute("data-sort-asc") === "true";
-            
+
             rows.sort((a, b) => {{
                 let x = a.cells[column].textContent;
                 let y = b.cells[column].textContent;
-                
+
                 if (column === 0 || column === 1) {{
                     // Sort numbers for rank and node ID
                     return isAsc ? Number(x) - Number(y) : Number(y) - Number(x);
@@ -174,7 +171,7 @@ def generate_html(ranked_nodes: List[Tuple[int, float]], output_path: str = "ran
                     return isAsc ? x - y : y - x;
                 }}
             }});
-            
+
             // Rebuild table with sorted rows
             table.tBodies[0].append(...rows);
             table.setAttribute("data-sort-asc", !isAsc);
@@ -188,7 +185,7 @@ def generate_html(ranked_nodes: List[Tuple[int, float]], output_path: str = "ran
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Rank nodes by uptime')
-    parser.add_argument('node_ids', nargs='*', type=int, 
+    parser.add_argument('node_ids', nargs='*', type=int,
                        help='Optional node IDs to rank (default: rank all active nodes)')
     parser.add_argument('--html', action='store_true',
                        help='Generate HTML output instead of console output')
