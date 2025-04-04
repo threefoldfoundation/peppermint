@@ -217,10 +217,10 @@ def generate_html(ranked_nodes: List[Tuple[int, int, float, float, float]], outp
     </style>
 </head>
 <body>
-    <h1>{'Top ' + str(display_count) + ' ' if top_n is not None else ''}Nodes by Average Uptime</h1>
+    <h1>{'Top ' + str(display_count) + ' ' if top_n is not None else ''}Nodes by Average Uptime per Month</h1>
     <div class="sort-controls">
         <div class="slider-container">
-            <span>Average Uptime</span>
+            <span>Average Uptime per Month</span>
             <input type="range" min="0" max="100" value="0" class="sort-slider">
             <span>Total Uptime</span>
         </div>
@@ -231,7 +231,7 @@ def generate_html(ranked_nodes: List[Tuple[int, int, float, float, float]], outp
             <tr>
                 <th onclick="sortTable(0)">Node ID</th>
                 <th onclick="sortTable(1)">Farm ID</th>
-                <th onclick="sortTable(2)">Average Uptime</th>
+                <th onclick="sortTable(2)">Average Uptime per Month</th>
                 <th onclick="sortTable(3)">Total Uptime</th>
             </tr>
         </thead>
@@ -377,7 +377,7 @@ if __name__ == "__main__":
         generate_html(rankings, output_path=args.output, top_n=args.top)
     else:
         print(f"Top {args.top} Nodes by Average Uptime:")
-        print("Rank\tNode ID\t\tFarm ID\t\tAverage Uptime")
+        print("Rank\tNode ID\t\tFarm ID\t\tAverage Uptime per Month")
         print("----------------------------------------------")
         for rank, (node_id, farm_id, uptime, total_uptime, relative_uptime) in enumerate(rankings[:args.top], 1):
             print(f"{rank}\t{node_id}\t{farm_id}\t{uptime:.2%}\t{relative_uptime:.1%} of max")
