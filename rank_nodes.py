@@ -310,11 +310,39 @@ def generate_html(ranked_nodes: List[Tuple[int, int, float, float, float]], outp
 
         function applySort() {{
             const slider = document.querySelector('.sort-slider');
-            if (slider.value < 50) {{
-                sortTable(2); // Sort by average uptime
-            }} else {{
-                sortTable(3); // Sort by total uptime
+            const sliderValue = parseInt(slider.value);
+            const table = document.getElementById("rankingTable");
+            const rows = Array.from(table.rows).slice(1); // Skip header
+            const headers = table.rows[0].cells;
+
+            // Clear previous sort indicators
+            for (let i = 0; i < headers.length; i++) {{
+                headers[i].classList.remove('sorted-asc', 'sorted-desc', 'active');
             }}
+
+            // Calculate weights based on slider position
+            const avgWeight = (100 - sliderValue) / 100;
+            const totalWeight = sliderValue / 100;
+
+            // Sort rows using blended weights
+            rows.sort((a, b) => {{
+                const avgA = parseFloat(a.cells[2].textContent.replace('%', ''));
+                const avgB = parseFloat(b.cells[2].textContent.replace('%', ''));
+                const totalA = parseFloat(a.cells[3].textContent.replace('% of max', ''));
+                const totalB = parseFloat(b.cells[3].textContent.replace('% of max', ''));
+
+                const scoreA = (avgA * avgWeight) + (totalA * totalWeight);
+                const scoreB = (avgB * avgWeight) + (totalB * totalWeight);
+
+                return scoreB - scoreA; // Descending order
+            }});
+
+            // Rebuild table with sorted rows
+            table.tBodies[0].append(...rows);
+
+            // Update sort indicators
+            headers[2].classList.add('active');
+            headers[3].classList.add('active');
         }}
 
         // Initialize with default sort
