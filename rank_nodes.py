@@ -72,7 +72,7 @@ def calculate_uptime_stats(node_id: int, db_path: str = "receipts.db") -> Tuple[
     avg_uptime = total_uptime_percentage / valid_periods if valid_periods > 0 else 0.0
     return (avg_uptime, total_uptime_seconds)
 
-def rank_nodes(db_path: str = "receipts.db", node_ids: List[int] = None) -> List[Tuple[int, float, float]]:
+def rank_nodes(db_path: str = "receipts.db", node_ids: List[int] = None) -> List[Tuple[int, int, float, float]]:
     """Rank nodes by their average uptime and total uptime
 
     Args:
@@ -81,15 +81,21 @@ def rank_nodes(db_path: str = "receipts.db", node_ids: List[int] = None) -> List
     """
     if node_ids is None:
         mainnet = GridNetwork()
-        nodes = mainnet.graphql.nodes(["nodeID"], updatedAt_gt=int(time.time() - 24 * 60 * 60))
+        nodes = mainnet.graphql.nodes(["nodeID", "farmID"], updatedAt_gt=int(time.time() - 24 * 60 * 60))
         node_ids = [n["nodeID"] for n in nodes]
+        node_farms = {n["nodeID"]: n["farmID"] for n in nodes}
+    else:
+        mainnet = GridNetwork()
+        nodes = mainnet.graphql.nodes(["nodeID", "farmID"], nodeID_in=node_ids)
+        node_farms = {n["nodeID"]: n["farmID"] for n in nodes}
+    
     ranked_nodes = []
 
     count = 0
     for node_id in node_ids:
         avg_uptime, total_uptime = calculate_uptime_stats(node_id, db_path)
         if avg_uptime > 0:  # Only include nodes with some uptime
-            ranked_nodes.append((node_id, avg_uptime, total_uptime))
+            ranked_nodes.append((node_id, node_farms.get(node_id, 0), avg_uptime, total_uptime))
 
         count += 1
         if count % 100 == 0:
@@ -99,7 +105,7 @@ def rank_nodes(db_path: str = "receipts.db", node_ids: List[int] = None) -> List
     ranked_nodes.sort(key=lambda x: x[1], reverse=True)
     return ranked_nodes
 
-def generate_html(ranked_nodes: List[Tuple[int, float, float]], output_path: str = "rankings.html", top_n: int = None):
+def generate_html(ranked_nodes: List[Tuple[int, int, float, float]], output_path: str = "rankings.html", top_n: int = None):
     """Generate an HTML file with sortable table of rankings
     
     Args:
@@ -169,16 +175,18 @@ def generate_html(ranked_nodes: List[Tuple[int, float, float]], output_path: str
         <thead>
             <tr>
                 <th onclick="sortTable(0)">Node ID</th>
-                <th onclick="sortTable(1)">Average Uptime</th>
-                <th onclick="sortTable(2)">Total Uptime</th>
+                <th onclick="sortTable(1)">Farm ID</th>
+                <th onclick="sortTable(2)">Average Uptime</th>
+                <th onclick="sortTable(3)">Total Uptime</th>
             </tr>
         </thead>
         <tbody>
 """
 
-    for node_id, uptime, total_uptime in ranked_nodes[:top_n] if top_n is not None else ranked_nodes:
+    for node_id, farm_id, uptime, total_uptime in ranked_nodes[:top_n] if top_n is not None else ranked_nodes:
         html += f"""            <tr>
                 <td><a href="/node/{node_id}">{node_id}</a></td>
+                <td><a href="/farm/{farm_id}">{farm_id}</a></td>
                 <td class="uptime">{uptime:.2%}</td>
                 <td class="uptime">{int(total_uptime)} seconds</td>
             </tr>
@@ -274,7 +282,7 @@ if __name__ == "__main__":
         generate_html(rankings, output_path=args.output, top_n=args.top)
     else:
         print(f"Top {args.top} Nodes by Average Uptime:")
-        print("Rank\tNode ID\t\tAverage Uptime")
-        print("----------------------------------")
-        for rank, (node_id, uptime, total_uptime) in enumerate(rankings[:args.top], 1):
-            print(f"{rank}\t{node_id}\t{uptime:.2%}\t{int(total_uptime)} seconds")
+        print("Rank\tNode ID\t\tFarm ID\t\tAverage Uptime")
+        print("----------------------------------------------")
+        for rank, (node_id, farm_id, uptime, total_uptime) in enumerate(rankings[:args.top], 1):
+            print(f"{rank}\t{node_id}\t{farm_id}\t{uptime:.2%}\t{int(total_uptime)} seconds")
