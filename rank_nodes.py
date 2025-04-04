@@ -217,7 +217,7 @@ def generate_html(ranked_nodes: List[Tuple[int, int, float, float, float]], outp
     </style>
 </head>
 <body>
-    <h1>{'Top ' + str(display_count) + ' ' if top_n is not None else ''}Nodes by Average Uptime per Month</h1>
+    <h1>{'Top ' + str(display_count) + ' ' if top_n is not None else ''}Nodes Reliability Leaderboard</h1>
     <div class="sort-controls">
         <div class="slider-container">
             <span>Average Uptime per Month</span>
