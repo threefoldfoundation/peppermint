@@ -99,8 +99,15 @@ def rank_nodes(db_path: str = "receipts.db", node_ids: List[int] = None) -> List
     ranked_nodes.sort(key=lambda x: x[1], reverse=True)
     return ranked_nodes
 
-def generate_html(ranked_nodes: List[Tuple[int, float, float]], output_path: str = "rankings.html", top_n: int = 50):
-    """Generate an HTML file with sortable table of rankings"""
+def generate_html(ranked_nodes: List[Tuple[int, float, float]], output_path: str = "rankings.html", top_n: int = None):
+    """Generate an HTML file with sortable table of rankings
+    
+    Args:
+        ranked_nodes: List of (node_id, avg_uptime, total_uptime) tuples
+        output_path: Path to save HTML file
+        top_n: Optional limit on number of nodes to show (None shows all)
+    """
+    display_count = len(ranked_nodes) if top_n is None else min(top_n, len(ranked_nodes))
     html = f"""<!DOCTYPE html>
 <html>
 <head>
@@ -157,7 +164,7 @@ def generate_html(ranked_nodes: List[Tuple[int, float, float]], output_path: str
     </style>
 </head>
 <body>
-    <h1>Top {min(top_n, len(ranked_nodes))} Nodes by Average Uptime</h1>
+    <h1>{'Top ' + str(display_count) + ' ' if top_n is not None else ''}Nodes by Average Uptime</h1>
     <table id="rankingTable">
         <thead>
             <tr>
@@ -169,7 +176,7 @@ def generate_html(ranked_nodes: List[Tuple[int, float, float]], output_path: str
         <tbody>
 """
 
-    for node_id, uptime, total_uptime in ranked_nodes[:top_n]:
+    for node_id, uptime, total_uptime in ranked_nodes[:top_n] if top_n is not None else ranked_nodes:
         html += f"""            <tr>
                 <td><a href="/node/{node_id}">{node_id}</a></td>
                 <td class="uptime">{uptime:.2%}</td>
@@ -254,8 +261,8 @@ if __name__ == "__main__":
                        help='Generate HTML output instead of console output')
     parser.add_argument('--output', default='rankings.html',
                        help='HTML output file path (default: rankings.html)')
-    parser.add_argument('--top', type=int, default=50,
-                       help='Number of top nodes to show (default: 50)')
+    parser.add_argument('--top', type=int, default=None,
+                       help='Optional limit on number of top nodes to show (default: show all)')
     args = parser.parse_args()
 
     if args.node_ids:
