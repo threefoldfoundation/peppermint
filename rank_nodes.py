@@ -90,17 +90,26 @@ def rank_nodes(db_path: str = "receipts.db", node_ids: List[int] = None) -> List
         node_farms = {n["nodeID"]: n["farmID"] for n in nodes}
 
     ranked_nodes = []
+    max_total_uptime = 0
 
+    # First pass to find maximum total uptime
+    for node_id in node_ids:
+        avg_uptime, total_uptime = calculate_uptime_stats(node_id, db_path)
+        if avg_uptime > 0 and total_uptime > max_total_uptime:
+            max_total_uptime = total_uptime
+
+    # Second pass to create ranked list with relative uptime
     for node_id in node_ids:
         avg_uptime, total_uptime = calculate_uptime_stats(node_id, db_path)
         if avg_uptime > 0:  # Only include nodes with some uptime
-            ranked_nodes.append((node_id, node_farms.get(node_id, 0), avg_uptime, total_uptime))
+            relative_uptime = total_uptime / max_total_uptime if max_total_uptime > 0 else 0
+            ranked_nodes.append((node_id, node_farms.get(node_id, 0), avg_uptime, total_uptime, relative_uptime))
 
     # Sort by average uptime descending
     ranked_nodes.sort(key=lambda x: x[1], reverse=True)
     return ranked_nodes
 
-def generate_html(ranked_nodes: List[Tuple[int, int, float, float]], output_path: str = "rankings.html", top_n: int = None):
+def generate_html(ranked_nodes: List[Tuple[int, int, float, float, float]], output_path: str = "rankings.html", top_n: int = None):
     """Generate an HTML file with sortable table of rankings
 
     Args:
@@ -183,7 +192,7 @@ def generate_html(ranked_nodes: List[Tuple[int, int, float, float]], output_path
                 <td><a href="/node/{node_id}">{node_id}</a></td>
                 <td><a href="/farm/{farm_id}">{farm_id}</a></td>
                 <td class="uptime">{uptime:.2%}</td>
-                <td class="uptime">{int(total_uptime)} seconds</td>
+                <td class="uptime">{relative_uptime:.1%} of max</td>
             </tr>
 """
 
@@ -279,5 +288,5 @@ if __name__ == "__main__":
         print(f"Top {args.top} Nodes by Average Uptime:")
         print("Rank\tNode ID\t\tFarm ID\t\tAverage Uptime")
         print("----------------------------------------------")
-        for rank, (node_id, farm_id, uptime, total_uptime) in enumerate(rankings[:args.top], 1):
-            print(f"{rank}\t{node_id}\t{farm_id}\t{uptime:.2%}\t{int(total_uptime)} seconds")
+        for rank, (node_id, farm_id, uptime, total_uptime, relative_uptime) in enumerate(rankings[:args.top], 1):
+            print(f"{rank}\t{node_id}\t{farm_id}\t{uptime:.2%}\t{relative_uptime:.1%} of max")
