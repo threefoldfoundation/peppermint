@@ -648,7 +648,7 @@ def render_uptime_events(minting_node):
             
             # Create final entry showing end of period
             final_entry = [
-                datetime.fromtimestamp(period_end).strftime("%Y-%m-%d"),
+                datetime.fromtimestamp(period_end).strftime("%Y-%m-%d %H:%M:%S"),
                 int(period_end),
                 "0",  # No uptime credited after last event
                 "0",  # No elapsed time
