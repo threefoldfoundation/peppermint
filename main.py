@@ -651,8 +651,8 @@ def render_uptime_events(minting_node):
                 datetime.fromtimestamp(period_end).strftime("%Y-%m-%d"),
                 int(period_end),
                 "0",  # No uptime credited after last event
-                format_duration(0),  # No elapsed time
-                downtime_formatted,
+                "0",  # No elapsed time
+                str(int(downtime_seconds)),  # Raw downtime in seconds
                 "Node stopped reporting before period end"
             ]
             rows.append(Tr(*[Td(item) for item in final_entry]))
