@@ -634,6 +634,29 @@ def render_uptime_events(minting_node):
     rows = [header]
     for e in minting_node.events:
         rows.append(Tr(*[Td(item) for item in e]))
+    
+    # Add final entry if node stopped reporting before end of period
+    if minting_node.events:
+        last_event = minting_node.events[-1]
+        last_timestamp = last_event[1]  # Assuming timestamp is second item
+        period_end = minting_node.period.end
+        
+        if last_timestamp < period_end:
+            # Calculate downtime from last event to period end
+            downtime_seconds = period_end - last_timestamp
+            downtime_formatted = format_duration(downtime_seconds)
+            
+            # Create final entry showing end of period
+            final_entry = [
+                datetime.fromtimestamp(period_end).strftime("%Y-%m-%d"),
+                int(period_end),
+                "0",  # No uptime credited after last event
+                format_duration(0),  # No elapsed time
+                downtime_formatted,
+                "Node stopped reporting before period end"
+            ]
+            rows.append(Tr(*[Td(item) for item in final_entry]))
+    
     return Table(*rows)
 
 
