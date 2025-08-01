@@ -302,6 +302,26 @@ def render_main(
             }
             """
                 ),
+                Script(
+                    """
+                function toggleZeroDowntime(toggleRow) {
+                    const table = toggleRow.closest('table');
+                    const zeroRows = table.querySelectorAll('tr.zero-downtime');
+                    let hidden = true;
+                    zeroRows.forEach(row => {
+                        if (row.style.display === 'none' || row.style.display === '') {
+                            row.style.display = '';
+                        } else {
+                            row.style.display = 'none';
+                            hidden = false;
+                        }
+                    });
+                    toggleRow.cells[0].textContent = hidden
+                        ? `${zeroRows.length} entries hidden (zero downtime)`
+                        : `${zeroRows.length} entries shown (zero downtime)`;
+                }
+                """
+                ),
             ),
             Footer(
                 cls="container",
