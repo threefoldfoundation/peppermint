@@ -503,7 +503,7 @@ def render_details(node_id, period_slug):
                     download=True,
                 )("Download CSV"),
             ),
-            render_uptime_events(minting_node),
+            render_uptime_events(minting_node, node_id, period_to_slug(period)),
         ]
     else:
         uptime_events = [
@@ -617,7 +617,8 @@ def render_no_receipt_detail(node):
     return Table(*rows)
 
 
-def render_uptime_events(minting_node):
+def render_uptime_events(minting_node, node_id, period_slug):
+    table_id = f"uptime-{node_id}-{period_slug}"
     header = Tr(
         *[
             Th(Strong(label))
@@ -632,32 +633,49 @@ def render_uptime_events(minting_node):
         ]
     )
     rows = [header]
+    
+    # Build all event rows
+    event_rows = []
     for e in minting_node.events:
-        rows.append(Tr(*[Td(item) for item in e]))
+        downtime_val = str(e[4])  # Assuming downtime is 5th item
+        is_zero_downtime = downtime_val == "0" or downtime_val == "0 seconds"
+        row_cls = "zero-downtime" if is_zero_downtime else ""
+        event_rows.append((Tr(*[Td(item) for item in e], cls=row_cls), is_zero_downtime))
     
     # Add final entry if node stopped reporting before end of period
     if minting_node.events:
         last_event = minting_node.events[-1]
-        last_timestamp = last_event[1]  # Assuming timestamp is second item
+        last_timestamp = last_event[1]
         period_end = minting_node.period.end
         
         if last_timestamp < period_end:
-            # Calculate downtime from last event to period end
             downtime_seconds = period_end - last_timestamp
-            downtime_formatted = format_duration(downtime_seconds)
-            
-            # Create final entry showing end of period
             final_entry = [
                 datetime.fromtimestamp(period_end).strftime("%Y-%m-%d %H:%M:%S"),
                 int(period_end),
-                "0",  # No uptime credited after last event
-                "0",  # No elapsed time
-                str(int(downtime_seconds)),  # Raw downtime in seconds
+                "0",
+                "0",
+                str(int(downtime_seconds)),
                 "Node stopped reporting before period end"
             ]
-            rows.append(Tr(*[Td(item) for item in final_entry]))
+            event_rows.append((Tr(*[Td(item) for item in final_entry]), False))
     
-    return Table(*rows)
+    # Count zero-downtime rows
+    zero_count = sum(1 for _, is_zero in event_rows if is_zero)
+    
+    # Build final rows with toggle row
+    rows.append(Tr(
+        Td(f"{zero_count} entries hidden (zero downtime)", colspan=6,
+           style="cursor:pointer; text-align:center; font-style:italic;",
+           onclick="toggleZeroDowntime(this)")
+    ))
+    
+    for row, is_zero in event_rows:
+        if is_zero:
+            row.attrs['style'] = 'display:none'
+        rows.append(row)
+    
+    return Table(*rows, id=table_id)
 
 
 def receipt_header_node():
