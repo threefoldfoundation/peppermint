@@ -311,8 +311,14 @@ def render_main(
                 function toggleZeroDowntime() {
                     const checkbox = document.getElementById('show_zero_downtime');
                     const hiddenRows = document.querySelectorAll('table[id^="uptime-"] tr[data-hidden="true"]');
+                    const summaryRows = document.querySelectorAll('table[id^="uptime-"] tr[data-hidden-summary="true"]');
+                    
                     hiddenRows.forEach(row => {
                         row.style.display = checkbox.checked ? 'none' : '';
+                    });
+                    
+                    summaryRows.forEach(row => {
+                        row.style.display = checkbox.checked ? '' : 'none';
                     });
                 }
                 """
@@ -670,10 +676,10 @@ def render_uptime_events(minting_node, node_id, period_slug):
         if hidden_block:
             rows.append(
                 Tr(
-                    Td(
-                        colspan="6",
-                        style="text-align:center; font-style:italic; color:var(--pico-muted-color)"
-                    )(
+                    data_hidden_summary="true",
+                    style="display: none; text-align:center; font-style:italic; color:var(--pico-muted-color)"
+                )(
+                    Td(colspan="6")(
                         f"{len(hidden_block)} event(s) hidden (±10s downtime)"
                     )
                 )
