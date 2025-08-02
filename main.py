@@ -512,10 +512,10 @@ def render_details(node_id, period_slug):
                     Input(
                         type="checkbox",
                         id="show_zero_downtime",
-                        checked=True,
+                        checked=false,
                         onchange="toggleZeroDowntime()",
                     ),
-                    Label("Show zero downtime", fr="show_zero_downtime", style="margin-left: 5px"),
+                    Label("Hide ±10s downtime", fr="show_zero_downtime", style="margin-left: 5px"),
                 ),
                 A(
                     style="margin-left:auto;",
@@ -658,9 +658,14 @@ def render_uptime_events(minting_node, node_id, period_slug):
     event_rows = []
     for e in minting_node.events:
         downtime_val = str(e[4])  # Assuming downtime is 5th item
-        is_zero_downtime = downtime_val == "0" or downtime_val == "0 seconds"
-        row_cls = "zero-downtime" if is_zero_downtime else ""
-        event_rows.append((Tr(*[Td(item) for item in e], cls=row_cls), is_zero_downtime))
+        try:
+            downtime_seconds = int(downtime_val.split()[0])
+            is_near_zero_downtime = abs(downtime_seconds) <= 10
+        except (ValueError, IndexError):
+            is_near_zero_downtime = False
+        
+        row_cls = "zero-downtime" if is_near_zero_downtime else ""
+        event_rows.append((Tr(*[Td(item) for item in e], cls=row_cls), is_near_zero_downtime))
     
     # Add final entry if node stopped reporting before end of period
     if minting_node.events:
