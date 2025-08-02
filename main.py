@@ -310,46 +310,10 @@ def render_main(
                     r"""
                 function toggleZeroDowntime() {
                     const checkbox = document.getElementById('show_zero_downtime');
-                    const table = document.querySelector('table[id^="uptime-"]');
-                    if (!table) return;
-                    
-                    const rows = Array.from(table.querySelectorAll('tr'));
-                    const hiddenSummaryRow = table.querySelector('tr td[colspan="6"]');
-                    
-                    if (checkbox.checked) {
-                        // Hide zero-downtime rows and show summary
-                        let hiddenCount = 0;
-                        rows.forEach(row => {
-                            const cells = row.querySelectorAll('td');
-                            if (cells.length === 6 && cells[4]) { // Has all 6 columns, check downtime column
-                                const downtimeText = cells[4].textContent;
-                                const downtimeMatch = downtimeText.match(/(-?\d+)/);
-                                if (downtimeMatch && Math.abs(parseInt(downtimeMatch[1])) <= 10) {
-                                    row.style.display = 'none';
-                                    hiddenCount++;
-                                }
-                            }
-                        });
-                        
-                        // Create or update summary row
-                        if (hiddenCount > 0) {
-                            if (!hiddenSummaryRow) {
-                                const summaryRow = document.createElement('tr');
-                                summaryRow.innerHTML = `<td colspan="6" style="text-align: center; font-style: italic; color: var(--pico-muted-color)">${hiddenCount} event(s) hidden (±10s downtime)</td>`;
-                                table.appendChild(summaryRow);
-                            } else {
-                                hiddenSummaryRow.textContent = `${hiddenCount} event(s) hidden (±10s downtime)`;
-                            }
-                        }
-                    } else {
-                        // Show all rows and remove summary
-                        rows.forEach(row => {
-                            row.style.display = '';
-                        });
-                        if (hiddenSummaryRow && hiddenSummaryRow.parentElement) {
-                            hiddenSummaryRow.parentElement.remove();
-                        }
-                    }
+                    const hiddenRows = document.querySelectorAll('table[id^="uptime-"] tr[data-hidden="true"]');
+                    hiddenRows.forEach(row => {
+                        row.style.display = checkbox.checked ? 'none' : '';
+                    });
                 }
                 """
                 ),
@@ -698,27 +662,58 @@ def render_uptime_events(minting_node, node_id, period_slug):
     )
     rows = [header]
 
-    # Build all event rows
-    event_rows = []
+    hidden_block = []
+    visible_block = []
+
+    def flush_hidden_block():
+        nonlocal hidden_block
+        if hidden_block:
+            rows.append(
+                Tr(
+                    Td(
+                        colspan="6",
+                        style="text-align:center; font-style:italic; color:var(--pico-muted-color)"
+                    )(
+                        f"{len(hidden_block)} event(s) hidden (±10s downtime)"
+                    )
+                )
+            )
+            rows.extend(hidden_block)
+            hidden_block = []
+
+    def flush_visible_block():
+        nonlocal visible_block
+        rows.extend(visible_block)
+        visible_block = []
+
     for e in minting_node.events:
-        downtime_val = str(e[4])  # Assuming downtime is 5th item
+        downtime_val = str(e[4])
         try:
             downtime_seconds = int(downtime_val.split()[0])
             is_near_zero_downtime = abs(downtime_seconds) <= 10
         except (ValueError, IndexError):
             is_near_zero_downtime = False
 
-        row_cls = "zero-downtime" if is_near_zero_downtime else ""
-        event_rows.append(
-            (Tr(*[Td(item) for item in e], cls=row_cls), is_near_zero_downtime)
-        )
+        tr = Tr(*[Td(item) for item in e])
+        if is_near_zero_downtime:
+            tr.attrs["data-hidden"] = "true"
+            if visible_block:
+                flush_visible_block()
+            hidden_block.append(tr)
+        else:
+            if hidden_block:
+                flush_hidden_block()
+            visible_block.append(tr)
 
-    # Add final entry if node stopped reporting before end of period
+    # flush any remaining blocks
+    flush_hidden_block()
+    flush_visible_block()
+
+    # final entry if node stopped reporting
     if minting_node.events:
         last_event = minting_node.events[-1]
         last_timestamp = last_event[1]
         period_end = minting_node.period.end
-
         if last_timestamp < period_end:
             downtime_seconds = period_end - last_timestamp
             final_entry = [
@@ -729,14 +724,7 @@ def render_uptime_events(minting_node, node_id, period_slug):
                 str(int(downtime_seconds)),
                 "Node stopped reporting before period end",
             ]
-            event_rows.append((Tr(*[Td(item) for item in final_entry]), False))
-
-    # Count zero-downtime rows
-    zero_count = sum(1 for _, is_zero in event_rows if is_zero)
-
-    # Build final rows - initially show all rows
-    for row, is_zero in event_rows:
-        rows.append(row)
+            rows.append(Tr(*[Td(item) for item in final_entry]))
 
     return Table(*rows, id=table_id)
 
