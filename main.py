@@ -307,7 +307,7 @@ def render_main(
             """
                 ),
                 Script(
-                    """
+                    r"""
                 function toggleZeroDowntime() {
                     const checkbox = document.getElementById('show_zero_downtime');
                     const table = document.querySelector('table[id^="uptime-"]');
