@@ -512,7 +512,7 @@ def render_details(node_id, period_slug):
                     Input(
                         type="checkbox",
                         id="show_zero_downtime",
-                        checked=false,
+                        checked=False,
                         onchange="toggleZeroDowntime()",
                     ),
                     Label("Hide ±10s downtime", fr="show_zero_downtime", style="margin-left: 5px"),
