@@ -310,10 +310,46 @@ def render_main(
                     """
                 function toggleZeroDowntime() {
                     const checkbox = document.getElementById('show_zero_downtime');
-                    const zeroRows = document.querySelectorAll('tr.zero-downtime');
-                    zeroRows.forEach(row => {
-                        row.style.display = checkbox.checked ? 'none' : '';
-                    });
+                    const table = document.querySelector('table[id^="uptime-"]');
+                    if (!table) return;
+                    
+                    const rows = Array.from(table.querySelectorAll('tr'));
+                    const hiddenSummaryRow = table.querySelector('tr td[colspan="6"]');
+                    
+                    if (checkbox.checked) {
+                        // Hide zero-downtime rows and show summary
+                        let hiddenCount = 0;
+                        rows.forEach(row => {
+                            const cells = row.querySelectorAll('td');
+                            if (cells.length === 6 && cells[4]) { // Has all 6 columns, check downtime column
+                                const downtimeText = cells[4].textContent;
+                                const downtimeMatch = downtimeText.match(/(-?\d+)/);
+                                if (downtimeMatch && Math.abs(parseInt(downtimeMatch[1])) <= 10) {
+                                    row.style.display = 'none';
+                                    hiddenCount++;
+                                }
+                            }
+                        });
+                        
+                        // Create or update summary row
+                        if (hiddenCount > 0) {
+                            if (!hiddenSummaryRow) {
+                                const summaryRow = document.createElement('tr');
+                                summaryRow.innerHTML = `<td colspan="6" style="text-align: center; font-style: italic; color: var(--pico-muted-color)">${hiddenCount} event(s) hidden (±10s downtime)</td>`;
+                                table.appendChild(summaryRow);
+                            } else {
+                                hiddenSummaryRow.textContent = `${hiddenCount} event(s) hidden (±10s downtime)`;
+                            }
+                        }
+                    } else {
+                        // Show all rows and remove summary
+                        rows.forEach(row => {
+                            row.style.display = '';
+                        });
+                        if (hiddenSummaryRow && hiddenSummaryRow.parentElement) {
+                            hiddenSummaryRow.parentElement.remove();
+                        }
+                    }
                 }
                 """
                 ),
@@ -698,21 +734,9 @@ def render_uptime_events(minting_node, node_id, period_slug):
     # Count zero-downtime rows
     zero_count = sum(1 for _, is_zero in event_rows if is_zero)
 
-    # Build final rows
-    hidden_shown = False
+    # Build final rows - initially show all rows
     for row, is_zero in event_rows:
-        if is_zero and not hidden_shown:
-            # Add summary row for hidden events
-            rows.append(
-                Tr(
-                    Td(f"{zero_count} event(s) hidden (±10s downtime)", 
-                       colspan="6", 
-                       style="text-align: center; font-style: italic; color: var(--pico-muted-color)")
-                )
-            )
-            hidden_shown = True
-        elif not is_zero:
-            rows.append(row)
+        rows.append(row)
 
     return Table(*rows, id=table_id)
 
