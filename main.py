@@ -699,10 +699,20 @@ def render_uptime_events(minting_node, node_id, period_slug):
     zero_count = sum(1 for _, is_zero in event_rows if is_zero)
 
     # Build final rows
+    hidden_shown = False
     for row, is_zero in event_rows:
-        if is_zero:
-            row.attrs["style"] = "display:none"
-        rows.append(row)
+        if is_zero and not hidden_shown:
+            # Add summary row for hidden events
+            rows.append(
+                Tr(
+                    Td(f"{zero_count} event(s) hidden (±10s downtime)", 
+                       colspan="6", 
+                       style="text-align: center; font-style: italic; color: var(--pico-muted-color)")
+                )
+            )
+            hidden_shown = True
+        elif not is_zero:
+            rows.append(row)
 
     return Table(*rows, id=table_id)
 
