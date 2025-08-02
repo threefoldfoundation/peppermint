@@ -304,21 +304,12 @@ def render_main(
                 ),
                 Script(
                     """
-                function toggleZeroDowntime(toggleRow) {
-                    const table = toggleRow.closest('table');
-                    const zeroRows = table.querySelectorAll('tr.zero-downtime');
-                    let hidden = true;
+                function toggleZeroDowntime() {
+                    const checkbox = document.getElementById('show_zero_downtime');
+                    const zeroRows = document.querySelectorAll('tr.zero-downtime');
                     zeroRows.forEach(row => {
-                        if (row.style.display === 'none' || row.style.display === '') {
-                            row.style.display = '';
-                        } else {
-                            row.style.display = 'none';
-                            hidden = false;
-                        }
+                        row.style.display = checkbox.checked ? '' : 'none';
                     });
-                    toggleRow.cells[0].textContent = hidden
-                        ? `${zeroRows.length} entries hidden (zero downtime)`
-                        : `${zeroRows.length} entries shown (zero downtime)`;
                 }
                 """
                 ),
@@ -517,6 +508,15 @@ def render_details(node_id, period_slug):
         uptime_events = [
             Div(style="display: flex; align-items: baseline;")(
                 heading,
+                Div(style="display: flex; align-items: center; margin-left: 20px")(
+                    Input(
+                        type="checkbox",
+                        id="show_zero_downtime",
+                        checked=True,
+                        onchange="toggleZeroDowntime()",
+                    ),
+                    Label("Show zero downtime", fr="show_zero_downtime", style="margin-left: 5px"),
+                ),
                 A(
                     style="margin-left:auto;",
                     href=f"/csv/{node_id}/{period_to_slug(period)}",
@@ -683,13 +683,7 @@ def render_uptime_events(minting_node, node_id, period_slug):
     # Count zero-downtime rows
     zero_count = sum(1 for _, is_zero in event_rows if is_zero)
     
-    # Build final rows with toggle row
-    rows.append(Tr(
-        Td(f"{zero_count} entries hidden (zero downtime)", colspan=6,
-           style="cursor:pointer; text-align:center; font-style:italic;",
-           onclick="toggleZeroDowntime(this)")
-    ))
-    
+    # Build final rows
     for row, is_zero in event_rows:
         if is_zero:
             row.attrs['style'] = 'display:none'
