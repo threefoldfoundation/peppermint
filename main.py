@@ -3,15 +3,13 @@ import logging
 import sqlite3
 
 logging.basicConfig(
-    level=logging.WARNING,
-    format='%(asctime)s - %(levelname)s - %(message)s'
+    level=logging.WARNING, format="%(asctime)s - %(levelname)s - %(message)s"
 )
 import os
-import sqlite3
 import threading
 import time
 from datetime import datetime, timedelta
-from typing import Tuple, List
+from typing import List, Tuple
 
 import grid3.minting.mintingnode
 import grid3.network
@@ -84,7 +82,9 @@ def get(node_id: int, period_slug: str):
 @rt("/node/{node_id}")
 def get(req, node_id: int, show_empty: bool = False):
     try:
-        receipts = make_node_minting_periods(node_id, receipt_handler.get_node_receipts(node_id))
+        receipts = make_node_minting_periods(
+            node_id, receipt_handler.get_node_receipts(node_id)
+        )
         if not receipts:
             results = "No receipts found."
         else:
@@ -118,13 +118,17 @@ def get(req, farm_id: int, sort_by: str = "node", show_empty: bool = False):
             for node_id, receipts in farm_receipts:
                 if receipts:
                     results.append(H2(f"Node {node_id}"))
-                    results.append(render_receipt_overview(receipts, sort_by, show_empty))
+                    results.append(
+                        render_receipt_overview(receipts, sort_by, show_empty)
+                    )
 
         elif sort_by == "period":
             receipts_by_period = {}
             for _, receipts in farm_receipts:
                 for receipt in receipts:
-                    receipts_by_period.setdefault(receipt.period.offset, []).append(receipt)
+                    receipts_by_period.setdefault(receipt.period.offset, []).append(
+                        receipt
+                    )
             for offset, receipts in reversed(sorted(receipts_by_period.items())):
                 period = Period(offset=offset)
                 results.append(H2(f"{period.month_name} {period.year}"))
@@ -308,7 +312,7 @@ def render_main(
                     const checkbox = document.getElementById('show_zero_downtime');
                     const zeroRows = document.querySelectorAll('tr.zero-downtime');
                     zeroRows.forEach(row => {
-                        row.style.display = checkbox.checked ? '' : 'none';
+                        row.style.display = checkbox.checked ? 'none' : '';
                     });
                 }
                 """
@@ -515,7 +519,11 @@ def render_details(node_id, period_slug):
                         checked=False,
                         onchange="toggleZeroDowntime()",
                     ),
-                    Label("Hide ±10s downtime", fr="show_zero_downtime", style="margin-left: 5px"),
+                    Label(
+                        "Hide ±10s downtime",
+                        fr="show_zero_downtime",
+                        style="margin-left: 5px",
+                    ),
                 ),
                 A(
                     style="margin-left:auto;",
@@ -653,7 +661,7 @@ def render_uptime_events(minting_node, node_id, period_slug):
         ]
     )
     rows = [header]
-    
+
     # Build all event rows
     event_rows = []
     for e in minting_node.events:
@@ -663,16 +671,18 @@ def render_uptime_events(minting_node, node_id, period_slug):
             is_near_zero_downtime = abs(downtime_seconds) <= 10
         except (ValueError, IndexError):
             is_near_zero_downtime = False
-        
+
         row_cls = "zero-downtime" if is_near_zero_downtime else ""
-        event_rows.append((Tr(*[Td(item) for item in e], cls=row_cls), is_near_zero_downtime))
-    
+        event_rows.append(
+            (Tr(*[Td(item) for item in e], cls=row_cls), is_near_zero_downtime)
+        )
+
     # Add final entry if node stopped reporting before end of period
     if minting_node.events:
         last_event = minting_node.events[-1]
         last_timestamp = last_event[1]
         period_end = minting_node.period.end
-        
+
         if last_timestamp < period_end:
             downtime_seconds = period_end - last_timestamp
             final_entry = [
@@ -681,19 +691,19 @@ def render_uptime_events(minting_node, node_id, period_slug):
                 "0",
                 "0",
                 str(int(downtime_seconds)),
-                "Node stopped reporting before period end"
+                "Node stopped reporting before period end",
             ]
             event_rows.append((Tr(*[Td(item) for item in final_entry]), False))
-    
+
     # Count zero-downtime rows
     zero_count = sum(1 for _, is_zero in event_rows if is_zero)
-    
+
     # Build final rows
     for row, is_zero in event_rows:
         if is_zero:
-            row.attrs['style'] = 'display:none'
+            row.attrs["style"] = "display:none"
         rows.append(row)
-    
+
     return Table(*rows, id=table_id)
 
 
@@ -734,10 +744,12 @@ def mintinglite(node_id, period):
         con = sqlite3.connect("tfchain.db")
     except sqlite3.OperationalError as e:
         if "database is locked" in str(e):
-            logging.warning(f"Database locked error while accessing node {node_id} for period {period}")
+            logging.warning(
+                f"Database locked error while accessing node {node_id} for period {period}"
+            )
             return {
                 "error": "The database is currently locked. Please try again in a few moments.",
-                "events": []
+                "events": [],
             }
         raise
 
@@ -781,6 +793,7 @@ def mintinglite(node_id, period):
 
     node = grid3.minting.mintingnode.check_node(con, node_id, period)
     return node
+
 
 def slug_to_period(slug):
     return Period((datetime.strptime(slug, "%B-%Y") + timedelta(days=15)).timestamp())
