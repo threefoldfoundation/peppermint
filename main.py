@@ -694,7 +694,8 @@ def render_uptime_events(minting_node, node_id, period_slug):
         visible_block = []
 
     first_entry = True
-    for e in minting_node.events:
+    total_events = len(minting_node.events)
+    for idx, e in enumerate(minting_node.events):
         downtime_val = str(e[4])
         try:
             downtime_seconds = int(downtime_val.split()[0])
@@ -703,12 +704,14 @@ def render_uptime_events(minting_node, node_id, period_slug):
             is_near_zero_downtime = False
 
         tr = Tr(*[Td(item) for item in e])
-        # Ensure the very first entry is always visible, even if near-zero downtime
-        if first_entry:
+        # Ensure the very first and very last entries are always visible, even if near-zero downtime
+        is_last_entry = (idx == total_events - 1)
+        if first_entry or is_last_entry:
             if hidden_block:
                 flush_hidden_block()
             visible_block.append(tr)
-            first_entry = False
+            if first_entry:
+                first_entry = False
             continue
 
         if is_near_zero_downtime:
