@@ -524,7 +524,7 @@ def render_details(node_id, period_slug):
                     download=True,
                 )("Download CSV"),
             ),
-            Div(style="display: flex; align-items: center; margin-top: 8px; margin-bottom: 8px")(
+            Div(style="display: flex; align-items: center;")(
                 Input(
                     type="checkbox",
                     id="show_zero_downtime",
@@ -532,11 +532,12 @@ def render_details(node_id, period_slug):
                     onchange="toggleZeroDowntime()",
                 ),
                 Label(
-                    "Hide ±10s downtime",
+                    "Summary view",
                     fr="show_zero_downtime",
                     style="margin-left: 5px",
                 ),
             ),
+            Br(),
             render_uptime_events(minting_node, node_id, period_to_slug(period)),
         ]
     else:
@@ -680,7 +681,7 @@ def render_uptime_events(minting_node, node_id, period_slug):
                     style="display: none; text-align:center; font-style:italic; color:var(--pico-muted-color)",
                 )(
                     Td(colspan="6")(
-                        f"{len(hidden_block)} event(s) hidden (±10s downtime)"
+                        f"{len(hidden_block)} event(s) hidden (less than 10s downtime)"
                     )
                 )
             )
