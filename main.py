@@ -524,7 +524,7 @@ def render_details(node_id, period_slug):
                     download=True,
                 )("Download CSV"),
             ),
-            Div(style="display: flex; align-items: center; margin-top: 8px")(
+            Div(style="display: flex; align-items: center; margin-top: 8px; margin-bottom: 8px")(
                 Input(
                     type="checkbox",
                     id="show_zero_downtime",
