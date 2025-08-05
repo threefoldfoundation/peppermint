@@ -518,24 +518,24 @@ def render_details(node_id, period_slug):
         uptime_events = [
             Div(style="display: flex; align-items: baseline;")(
                 heading,
-                Div(style="display: flex; align-items: center; margin-left: 20px")(
-                    Input(
-                        type="checkbox",
-                        id="show_zero_downtime",
-                        checked=False,
-                        onchange="toggleZeroDowntime()",
-                    ),
-                    Label(
-                        "Hide ±10s downtime",
-                        fr="show_zero_downtime",
-                        style="margin-left: 5px",
-                    ),
-                ),
                 A(
                     style="margin-left:auto;",
                     href=f"/csv/{node_id}/{period_to_slug(period)}",
                     download=True,
                 )("Download CSV"),
+            ),
+            Div(style="display: flex; align-items: center; margin-top: 8px")(
+                Input(
+                    type="checkbox",
+                    id="show_zero_downtime",
+                    checked=False,
+                    onchange="toggleZeroDowntime()",
+                ),
+                Label(
+                    "Hide ±10s downtime",
+                    fr="show_zero_downtime",
+                    style="margin-left: 5px",
+                ),
             ),
             render_uptime_events(minting_node, node_id, period_to_slug(period)),
         ]
