@@ -681,7 +681,7 @@ def render_uptime_events(minting_node, node_id, period_slug):
                     style="display: none; text-align:center; font-style:italic; color:var(--pico-muted-color)",
                 )(
                     Td(colspan="6")(
-                        f"{len(hidden_block)} event(s) hidden (less than 10s downtime)"
+                        f"{len(hidden_block)} {'event' if len(hidden_block) == 1 else 'events'} hidden (less than 10s downtime)"
                     )
                 )
             )
