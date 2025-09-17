@@ -405,7 +405,10 @@ def render_receipt_row(node_period, sort_by, show_empty, show_year=True):
             return Tr(Td("Data not available"), Td(), Td(), Td())
 
         uptime = receipt["measured_uptime"]
-        reward = round(receipt["reward"]["tft"] / TFT_DIVISOR, 2)
+        if receipt["stellar_payout_address"] == "":
+            reward = "0.0"
+        else:
+            reward = round(receipt["reward"]["tft"] / TFT_DIVISOR, 2)
 
     now = time.time()
     if now > period.end and uptime is not None:
@@ -555,13 +558,18 @@ def render_receipt_detail(r):
     rows = [receipt_header_details()]
     uptime = round(r["measured_uptime"] / STANDARD_PERIOD_DURATION * 100, 2)
 
+    if r["stellar_payout_address"] == "":
+        reward = ["0.0 ", I("(payout address missing)")]
+    else:
+        reward = [round(r["reward"]["tft"] / TFT_DIVISOR, 2)]
+
     rows.append(
         Tr(
             Td(datetime.fromtimestamp(r["period"]["start"]).date()),
             Td(datetime.fromtimestamp(r["period"]["end"]).date()),
             # Some receipts have uptime figures that are way too large
             Td(f"{uptime}%") if uptime <= 100 else Td("Data not available"),
-            Td(round(r["reward"]["tft"] / TFT_DIVISOR, 2)),
+            Td(*reward),
         )
     )
 
@@ -705,7 +713,7 @@ def render_uptime_events(minting_node, node_id, period_slug):
 
         tr = Tr(*[Td(item) for item in e])
         # Ensure the very first and very last entries are always visible, even if near-zero downtime
-        is_last_entry = (idx == total_events - 1)
+        is_last_entry = idx == total_events - 1
         if first_entry or is_last_entry:
             if hidden_block:
                 flush_hidden_block()
