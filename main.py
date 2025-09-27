@@ -403,7 +403,10 @@ def render_receipt_row(node_period, sort_by, show_empty, show_year=True):
         elif node_period.minted_receipt:
             receipt = node_period.minted_receipt
         else:
-            # So far I didn't see this one
+            # TODO: apparently there are some fixups where neither the original
+            # hash nor "correct" has lead to a receipt. In that case, we can
+            # still at least render the reward amount (maybe use
+            # render_fixup_detail)
             return Tr(Td("Data not available"), Td(), Td(), Td())
 
         uptime = receipt["measured_uptime"]
