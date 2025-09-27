@@ -11,9 +11,10 @@ import time
 from datetime import datetime, timedelta
 from typing import List, Tuple
 
+import grid3.graphql
 import grid3.minting.mintingnode
-import grid3.network
 from fasthtml.common import *
+from gql import gql
 from grid3.minting.period import Period
 
 from lightdark import DarkLink, LightDarkScript, LightLink
@@ -38,7 +39,8 @@ TFT_DIVISOR = 1e7  # Number of decimal places, as used on tfchain
 
 os.makedirs(CSV_DIR, exist_ok=True)
 
-mainnet = grid3.network.GridNetwork()
+graphql_url = "https://graphql.grid.tf/graphql"
+graphql = grid3.graphql.GraphQL(graphql_url, fetch_schema=False)
 # We can run into some trouble with multiple threads trying to use gql at the
 # same time. Bit primitive, but we just lock it for now
 gql_lock = threading.Lock()
@@ -172,7 +174,7 @@ def make_url(select, id_input, show_empty, sort_by):
 
 def fetch_farm_receipts(farm_id: int) -> List[Tuple[int, list | None]]:
     with gql_lock:
-        nodes = mainnet.graphql.nodes(["nodeID"], farmID_eq=farm_id)
+        nodes = graphql.nodes(["nodeID"], farmID_eq=farm_id)
 
     node_ids = [node["nodeID"] for node in nodes]
 
@@ -461,6 +463,13 @@ def render_details(node_id, period_slug):
 
     receipts = receipt_handler.get_node_period_receipts(node_id, period)
     minting_node = mintinglite(node_id, period)
+
+    # Get contract billing revenue
+    contract_revenue = get_contract_billing_revenue(node_id, period)
+    # Convert to decimal format
+    if contract_revenue > 0:
+        contract_revenue = round(contract_revenue / TFT_DIVISOR, 2)
+
     response = [H2(f"Node {node_id} - {period.month_name} {period.year}")]
     if receipts:
         receipts_by_hash = {}
@@ -479,17 +488,23 @@ def render_details(node_id, period_slug):
             # fill in the details we have from the fixup receipt
             response.append(H3("Corrected Receipt"))
             if correct_receipt:
-                response.append(render_receipt_detail(correct_receipt))
+                response.append(
+                    render_receipt_detail(correct_receipt, contract_revenue)
+                )
             else:
-                response.append(render_fixup_detail(receipt, "correct"))
+                response.append(
+                    render_fixup_detail(receipt, "correct", contract_revenue)
+                )
 
             response.append(H3("Original Receipt"))
             if minted_receipt:
-                response.append(render_receipt_detail(minted_receipt))
+                response.append(render_receipt_detail(minted_receipt, contract_revenue))
             else:
-                response.append(render_fixup_detail(receipt, "minted"))
+                response.append(
+                    render_fixup_detail(receipt, "minted", contract_revenue)
+                )
         else:
-            response.append(render_receipt_detail(receipt))
+            response.append(render_receipt_detail(receipt, contract_revenue))
     elif minting_node:
         if time.time() < period.end:
             response.append(
@@ -511,7 +526,7 @@ def render_details(node_id, period_slug):
         response.append(Br())
         response.append(Br())
 
-        response.append(render_no_receipt_detail(minting_node))
+        response.append(render_no_receipt_detail(minting_node, contract_revenue))
     else:
         response.append(P("Data not available for this period"))
     response.append(Br())
@@ -554,7 +569,7 @@ def render_details(node_id, period_slug):
     return response
 
 
-def render_receipt_detail(r):
+def render_receipt_detail(r, contract_revenue=0):
     rows = [receipt_header_details()]
     uptime = round(r["measured_uptime"] / STANDARD_PERIOD_DURATION * 100, 2)
 
@@ -563,6 +578,11 @@ def render_receipt_detail(r):
     else:
         reward = [round(r["reward"]["tft"] / TFT_DIVISOR, 2)]
 
+    # Add contract revenue to the existing row
+    contract_revenue_display = (
+        f"{contract_revenue} TFT" if contract_revenue > 0 else "0 TFT"
+    )
+
     rows.append(
         Tr(
             Td(datetime.fromtimestamp(r["period"]["start"]).date()),
@@ -570,6 +590,7 @@ def render_receipt_detail(r):
             # Some receipts have uptime figures that are way too large
             Td(f"{uptime}%") if uptime <= 100 else Td("Data not available"),
             Td(*reward),
+            Td(contract_revenue_display),
         )
     )
 
@@ -579,6 +600,7 @@ def render_receipt_detail(r):
             Th(Br(), Strong("SU")),
             Th(Br(), Strong("NU")),
             Th(Br(), Strong("Certification")),
+            Th(),
         )
     )
 
@@ -588,12 +610,14 @@ def render_receipt_detail(r):
             Td(r["cloud_units"]["su"]),
             Td(r["cloud_units"]["nu"]),
             Td(r["node_type"]),
+            Td(),
         )
     )
+
     return Table(*rows)
 
 
-def render_fixup_detail(r, rtype):
+def render_fixup_detail(r, rtype, contract_revenue=0):
     """Some receipts are missing from the API. In that case, render a limited version of what the receipt would contain based on the info in the fixup receipt."""
     rows = [receipt_header_details()]
 
@@ -603,6 +627,7 @@ def render_fixup_detail(r, rtype):
             Td(datetime.fromtimestamp(r["period"]["end"]).date()),
             Td("Data not available"),
             Td(round(r["correct_reward"]["tft"] / TFT_DIVISOR, 2)),
+            Td(f"{contract_revenue} TFT" if contract_revenue > 0 else "0 TFT"),
         )
     )
 
@@ -612,6 +637,7 @@ def render_fixup_detail(r, rtype):
             Th(Br(), Strong("SU")),
             Th(Br(), Strong("NU")),
             Th(Br(), Strong("Certification")),
+            Th(),
         )
     )
 
@@ -621,12 +647,14 @@ def render_fixup_detail(r, rtype):
             Td(r[f"{rtype}_cloud_units"]["su"]),
             Td(r[f"{rtype}_cloud_units"]["nu"]),
             Td("Data not available"),
+            Td(),
         )
     )
+
     return Table(*rows)
 
 
-def render_no_receipt_detail(node):
+def render_no_receipt_detail(node, contract_revenue=0):
     """For periods with no receipt yet, render a limited details table from the
     MintingNode data."""
     if isinstance(node, dict) and "error" in node:
@@ -638,6 +666,7 @@ def render_no_receipt_detail(node):
             Th(Strong("Period End")),
             Th(Strong("Uptime")),
             Th(Strong("Downtime")),
+            Th(Strong("Contract Revenue")),
         )
     ]
 
@@ -654,6 +683,7 @@ def render_no_receipt_detail(node):
             Td(datetime.fromtimestamp(node.period.end).date()),
             Td(f"{uptime_percent}%"),
             Td(format_duration(node.downtime)),
+            Td(f"{contract_revenue} TFT" if contract_revenue > 0 else "0 TFT"),
         )
     )
 
@@ -781,6 +811,7 @@ def receipt_header_details():
         Th(Strong("Period End")),
         Th(Strong("Uptime")),
         Th(Strong("TFT Minted")),
+        Th(Strong("Contract Revenue")),
     )
 
 
@@ -886,6 +917,80 @@ def format_duration(seconds):
         if days.is_integer():
             days = int(days)
         return f"{days} {'day' if days == 1 else 'days'}"
+
+
+def get_contract_billing_revenue(node_id: int, period: Period) -> float:
+    """Query contract billing data for a node during a specific period and return total revenue."""
+    # First query: Get all contracts for the node
+    contracts_query = gql("""
+        query NodeContracts($nodeId: Int!) {
+            nodeContracts(where: {nodeID_eq: $nodeId}) {
+                contractID
+            }
+        }
+    """)
+
+    with gql_lock:
+        try:
+            # Execute the contracts query
+            contracts_result = graphql.client.execute(
+                contracts_query, variable_values={"nodeId": node_id}
+            )
+
+            # Extract contract IDs
+            contract_ids = []
+            if (
+                "nodeContracts" in contracts_result
+                and contracts_result["nodeContracts"]
+            ):
+                contract_ids = [
+                    contract["contractID"]
+                    for contract in contracts_result["nodeContracts"]
+                ]
+
+            # If no contracts found, return 0
+            if not contract_ids:
+                return 0.0
+
+            # Second query: Get bill reports for all contracts within the period
+            bill_reports_query = gql("""
+                query ContractBilling($contractIds: [BigInt!], $timestampGt: BigInt!, $timestampLt: BigInt!) {
+                    contractBillReports(
+                        where: {
+                            contractID_in: $contractIds,
+                            timestamp_gt: $timestampGt,
+                            timestamp_lt: $timestampLt
+                        }
+                    ) {
+                        contractID
+                        amountBilled
+                    }
+                }
+            """)
+
+            # Execute the bill reports query
+            bill_reports_result = graphql.client.execute(
+                bill_reports_query,
+                variable_values={
+                    "contractIds": contract_ids,
+                    "timestampGt": str(period.start),
+                    "timestampLt": str(period.end),
+                },
+            )
+
+            # Sum up all the billed amounts
+            total_revenue = 0.0
+            for report in bill_reports_result["contractBillReports"]:
+                total_revenue += float(report["amountBilled"])
+
+            print(total_revenue)
+
+            return total_revenue
+        except Exception as e:
+            logging.error(
+                f"Error querying contract billing data for node {node_id}: {str(e)}"
+            )
+            return 0.0
 
 
 serve()
