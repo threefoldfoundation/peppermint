@@ -115,28 +115,34 @@ def get(req, node_id: int, show_empty: bool = False):
 def get(req, farm_id: int, sort_by: str = "node", show_empty: bool = False):
     try:
         farm_receipts = fetch_farm_receipts(farm_id)
-        results = []
-        if sort_by == "node":
-            for node_id, receipts in farm_receipts:
-                if receipts:
-                    results.append(H2(f"Node {node_id}"))
-                    results.append(
-                        render_receipt_overview(receipts, sort_by, show_empty)
-                    )
+        
+        # Handle case where farm has no nodes
+        if not farm_receipts:
+            results = P(f"Farm {farm_id} has no nodes or nodes not found.")
+        else:
+            results = []
+            if sort_by == "node":
+                for node_id, receipts in farm_receipts:
+                    if receipts:
+                        results.append(H2(f"Node {node_id}"))
+                        results.append(
+                            render_receipt_overview(receipts, sort_by, show_empty)
+                        )
 
-        elif sort_by == "period":
-            receipts_by_period = {}
-            for _, receipts in farm_receipts:
-                for receipt in receipts:
-                    receipts_by_period.setdefault(receipt.period.offset, []).append(
-                        receipt
-                    )
-            for offset, receipts in reversed(sorted(receipts_by_period.items())):
-                period = Period(offset=offset)
-                results.append(H2(f"{period.month_name} {period.year}"))
-                results.append(render_receipt_overview(receipts, sort_by, show_empty))
-        if not results:
-            results = "No receipts found."
+            elif sort_by == "period":
+                receipts_by_period = {}
+                for _, receipts in farm_receipts:
+                    for receipt in receipts:
+                        receipts_by_period.setdefault(receipt.period.offset, []).append(
+                            receipt
+                        )
+                for offset, receipts in reversed(sorted(receipts_by_period.items())):
+                    period = Period(offset=offset)
+                    results.append(H2(f"{period.month_name} {period.year}"))
+                    results.append(render_receipt_overview(receipts, sort_by, show_empty))
+            
+            if not results:
+                results = "No receipts found."
 
     except sqlite3.OperationalError as e:
         if "database is locked" in str(e):
@@ -177,34 +183,15 @@ def fetch_farm_receipts(farm_id: int) -> List[Tuple[int, list | None]]:
         nodes = graphql.nodes(["nodeID"], farmID_eq=farm_id)
 
     node_ids = [node["nodeID"] for node in nodes]
-
-    # If all or most of the nodes are caught up in the cache, then the thread pool might do more harm than good. But this is nice and simple
-    if len(node_ids) > 1:
-        receipts_by_node_id = {}
-        with concurrent.futures.ThreadPoolExecutor(max_workers=20) as pool:
-            for node_id in node_ids:
-                receipts_by_node_id[node_id] = pool.submit(
-                    receipt_handler.get_node_receipts, node_id
-                )
-
-        processed_responses = []
-        for node_id, future in receipts_by_node_id.items():
-            receipt_list = future.result()
-            processed_responses.append(
-                (node_id, make_node_minting_periods(node_id, receipt_list))
-            )
-    else:
-        # TODO: This throws an error if the nodes list is empty. We need to alert the user about the problem
-        node_id = node_ids[0]
-        processed_responses = [
-            (
-                node_id,
-                make_node_minting_periods(
-                    node_id, receipt_handler.get_node_receipts(node_id)
-                ),
-            )
-        ]
-
+    
+    # Simply fetch receipts from database for each node
+    processed_responses = []
+    for node_id in node_ids:
+        receipt_list = receipt_handler.get_node_receipts(node_id)
+        processed_responses.append(
+            (node_id, make_node_minting_periods(node_id, receipt_list))
+        )
+    
     # Sorts by node id
     return sorted(processed_responses)
 
