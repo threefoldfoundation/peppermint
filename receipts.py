@@ -19,6 +19,10 @@ logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
 )
 
+# Suppress logging of the full gql schema and query traffic. We should probably
+# do this upstream
+logging.getLogger("gql.transport").setLevel(logging.WARNING)
+
 STANDARD_PERIOD_DURATION = 24 * 60 * 60 * (365 * 3 + 366 * 2) // 60
 ONE_HOUR = 60 * 60
 
@@ -67,7 +71,7 @@ class ReceiptHandler:
         self.init_db()
 
         # Check if database is empty and print warning
-        if self.is_database_empty():
+        if __name__ != "__main__" and self.is_database_empty():
             print(
                 f"WARNING: Database '{db_path}' is empty. Please run the receipts daemon to populate receipts data."
             )
