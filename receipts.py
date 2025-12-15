@@ -25,6 +25,12 @@ ONE_HOUR = 60 * 60
 # With 50 workers, we can scrape ~7500 nodes in ~10 minutes
 SCRAPER_WORKERS = 50
 
+# Daemon mode constants
+DAEMON_CHECK_INTERVAL = 10  # seconds between checks in the inner loop
+DAEMON_CHECKS_PER_CYCLE = 60  # number of checks before checking receipts (10 minutes total)
+DAEMON_REFRESH_INTERVAL = 6  # refresh node list every hour (6 * 10 minutes)
+DAEMON_ERROR_RETRY_DELAY = 60  # seconds to wait after an error
+
 
 class ReceiptHandler:
     """This is a wrapper for the Alpha Minting API, with caching. Fetched
@@ -523,44 +529,43 @@ def main():
 
     # Continuous monitoring loop - DAEMON MODE
     logging.info("Starting daemon mode...")
-
+    
     # Initialize refresh counter
     refresh_counter = 0
-    REFRESH_INTERVAL = 6  # Refresh node list every hour (6 * 10 minutes)
-
+    
     while running:
         try:
             # Refresh node IDs periodically
-            if refresh_counter >= REFRESH_INTERVAL or refresh_counter == 0:
+            if refresh_counter >= DAEMON_REFRESH_INTERVAL or refresh_counter == 0:
                 logging.info("Refreshing node ID list...")
                 node_ids = get_all_node_ids()
                 logging.info(f"Found {len(node_ids)} nodes")
                 refresh_counter = 0
-
+            
             # Wait before checking for updates
-            for _ in range(60):  # Check every 10 minutes (600/10 = 60)
+            for _ in range(DAEMON_CHECKS_PER_CYCLE):
                 if not running:
                     break
-                time.sleep(10)
-
+                time.sleep(DAEMON_CHECK_INTERVAL)
+            
             if not running:
                 break
-
+                
             # Check for new receipts using current node list
             logging.info("Checking for new receipts...")
             new_receipts_found = check_for_new_receipts(handler, node_ids)
-
+            
             if new_receipts_found:
                 logging.info("New receipts were found and processed")
             else:
                 logging.info("No new receipts found at this time")
-
+            
             # Increment refresh counter
             refresh_counter += 1
-
+                
         except Exception as e:
             logging.error(f"Error in daemon loop: {e}")
-            time.sleep(60)  # Wait a minute before retrying on error
+            time.sleep(DAEMON_ERROR_RETRY_DELAY)
 
     logging.info("Receipt daemon stopped")
 
