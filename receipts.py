@@ -444,10 +444,27 @@ def scrape_node(handler: ReceiptHandler, node_id: int):
 
 
 def scrape_nodes(handler: ReceiptHandler, node_ids: List[int]):
+    print(f"Scraping {len(node_ids)} nodes...")
+    results = []
+    completed = 0
+    total_nodes = len(node_ids)
+    
     with concurrent.futures.ThreadPoolExecutor(max_workers=SCRAPER_WORKERS) as executor:
-        return list(
-            executor.map(lambda node_id: scrape_node(handler, node_id), node_ids)
-        )
+        # Submit all tasks
+        futures = {executor.submit(scrape_node, handler, node_id): node_id for node_id in node_ids}
+        
+        # Process as they complete with progress updates
+        for future in concurrent.futures.as_completed(futures):
+            results.append(future.result())
+            completed += 1
+            
+            # Report progress every 10% or every 100 nodes, whichever is smaller
+            report_interval = max(1, min(total_nodes // 10, 100))
+            if completed % report_interval == 0 or completed == total_nodes:
+                percentage = (completed / total_nodes) * 100
+                print(f"Progress: {completed}/{total_nodes} nodes ({percentage:.1f}%)")
+    
+    return results
 
 
 def get_all_node_ids() -> List[int]:
@@ -509,8 +526,10 @@ def main():
     if handler.is_database_empty():
         logging.info(f"Found {len(node_ids)} nodes to process")
         results = scrape_nodes(handler, node_ids)
+        successful = sum(results)
+        failed = len(results) - successful
         logging.info(
-            f"Initial scrape completed. {sum(results)} nodes processed successfully"
+            f"Initial scrape completed. {successful} nodes processed successfully, {failed} failed"
         )
     else:
         logging.info("Database already populated, skipping initial full scrape")
