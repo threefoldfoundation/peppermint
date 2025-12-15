@@ -255,13 +255,8 @@ class ReceiptHandler:
         return receipts
 
     def get_receipt(self, receipt_hash: str) -> Dict | None:
-        receipt = self.get_stored_receipt(receipt_hash)
-        if not receipt:
-            receipt = self.fetch_receipt(receipt_hash)
-            if receipt:
-                self.save_receipt(receipt)
-
-        return receipt
+        # Read-only version: only return stored receipt
+        return self.get_stored_receipt(receipt_hash)
 
     def has_all_node_receipts(self, node_id: int) -> bool:
         """If there's a timestamp on disk from a previous fetch, check if at
@@ -279,17 +274,12 @@ class ReceiptHandler:
             return last_timestamp + self.query_rate < time.time()
 
     def get_node_receipts(self, node_id: int) -> List[Dict]:
-        if not self.has_all_node_receipts(node_id) and self.query_time_elapsed(node_id):
-            return self.fetch_and_process_node(node_id)
-        else:
-            return self.get_stored_node_receipts(node_id)
+        # Read-only version: only return stored receipts
+        return self.get_stored_node_receipts(node_id)
 
     def get_node_period_receipts(self, node_id: int, period: Period) -> List[Dict]:
-        receipts = self.get_stored_node_period_receipts(node_id, period)
-        if not receipts and self.query_time_elapsed(node_id):
-            self.fetch_and_process_node(node_id)
-            receipts = self.get_stored_node_period_receipts(node_id, period)
-        return receipts
+        # Read-only version: only return stored receipts
+        return self.get_stored_node_period_receipts(node_id, period)
 
 
 @dataclass
