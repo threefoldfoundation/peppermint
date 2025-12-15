@@ -455,10 +455,11 @@ def render_details(node_id, period_slug):
     minting_node = mintinglite(node_id, period)
 
     # Get contract billing revenue
-    contract_revenue = get_contract_billing_revenue(node_id, period)
+    # contract_revenue = get_contract_billing_revenue(node_id, period)
     # Convert to decimal format
-    if contract_revenue > 0:
-        contract_revenue = round(contract_revenue / TFT_DIVISOR, 2)
+    # if contract_revenue > 0:
+    #     contract_revenue = round(contract_revenue / TFT_DIVISOR, 2)
+    contract_revenue = 0
 
     response = [H2(f"Node {node_id} - {period.month_name} {period.year}")]
     if receipts:
@@ -569,9 +570,9 @@ def render_receipt_detail(r, contract_revenue=0):
         reward = [round(r["reward"]["tft"] / TFT_DIVISOR, 2)]
 
     # Add contract revenue to the existing row
-    contract_revenue_display = (
-        f"{contract_revenue} TFT" if contract_revenue > 0 else "0 TFT"
-    )
+    # contract_revenue_display = (
+    #     f"{contract_revenue} TFT" if contract_revenue > 0 else "0 TFT"
+    # )
 
     rows.append(
         Tr(
@@ -580,7 +581,8 @@ def render_receipt_detail(r, contract_revenue=0):
             # Some receipts have uptime figures that are way too large
             Td(f"{uptime}%") if uptime <= 100 else Td("Data not available"),
             Td(*reward),
-            Td(contract_revenue_display),
+            # Td(contract_revenue_display),
+            Td(),
         )
     )
 
@@ -617,7 +619,8 @@ def render_fixup_detail(r, rtype, contract_revenue=0):
             Td(datetime.fromtimestamp(r["period"]["end"]).date()),
             Td("Data not available"),
             Td(round(r["correct_reward"]["tft"] / TFT_DIVISOR, 2)),
-            Td(f"{contract_revenue} TFT" if contract_revenue > 0 else "0 TFT"),
+            # Td(f"{contract_revenue} TFT" if contract_revenue > 0 else "0 TFT"),
+            Td(),
         )
     )
 
@@ -656,7 +659,8 @@ def render_no_receipt_detail(node, contract_revenue=0):
             Th(Strong("Period End")),
             Th(Strong("Uptime")),
             Th(Strong("Downtime")),
-            Th(Strong("Contract Revenue")),
+            # Th(Strong("Contract Revenue")),
+            Th(),
         )
     ]
 
@@ -673,7 +677,8 @@ def render_no_receipt_detail(node, contract_revenue=0):
             Td(datetime.fromtimestamp(node.period.end).date()),
             Td(f"{uptime_percent}%"),
             Td(format_duration(node.downtime)),
-            Td(f"{contract_revenue} TFT" if contract_revenue > 0 else "0 TFT"),
+            # Td(f"{contract_revenue} TFT" if contract_revenue > 0 else "0 TFT"),
+            Td(),
         )
     )
 
@@ -801,7 +806,8 @@ def receipt_header_details():
         Th(Strong("Period End")),
         Th(Strong("Uptime")),
         Th(Strong("TFT Minted")),
-        Th(Strong("Contract Revenue")),
+        # Th(Strong("Contract Revenue")),
+        Th(),
     )
 
 
@@ -909,78 +915,78 @@ def format_duration(seconds):
         return f"{days} {'day' if days == 1 else 'days'}"
 
 
-def get_contract_billing_revenue(node_id: int, period: Period) -> float:
-    """Query contract billing data for a node during a specific period and return total revenue."""
-    # First query: Get all contracts for the node
-    contracts_query = gql("""
-        query NodeContracts($nodeId: Int!) {
-            nodeContracts(where: {nodeID_eq: $nodeId}) {
-                contractID
-            }
-        }
-    """)
+# def get_contract_billing_revenue(node_id: int, period: Period) -> float:
+#     """Query contract billing data for a node during a specific period and return total revenue."""
+#     # First query: Get all contracts for the node
+#     contracts_query = gql("""
+#         query NodeContracts($nodeId: Int!) {
+#             nodeContracts(where: {nodeID_eq: $nodeId}) {
+#                 contractID
+#             }
+#         }
+#     """)
 
-    with gql_lock:
-        try:
-            # Execute the contracts query
-            contracts_result = graphql.client.execute(
-                contracts_query, variable_values={"nodeId": node_id}
-            )
+#     with gql_lock:
+#         try:
+#             # Execute the contracts query
+#             contracts_result = graphql.client.execute(
+#                 contracts_query, variable_values={"nodeId": node_id}
+#             )
 
-            # Extract contract IDs
-            contract_ids = []
-            if (
-                "nodeContracts" in contracts_result
-                and contracts_result["nodeContracts"]
-            ):
-                contract_ids = [
-                    contract["contractID"]
-                    for contract in contracts_result["nodeContracts"]
-                ]
+#             # Extract contract IDs
+#             contract_ids = []
+#             if (
+#                 "nodeContracts" in contracts_result
+#                 and contracts_result["nodeContracts"]
+#             ):
+#                 contract_ids = [
+#                     contract["contractID"]
+#                     for contract in contracts_result["nodeContracts"]
+#                 ]
 
-            # If no contracts found, return 0
-            if not contract_ids:
-                return 0.0
+#             # If no contracts found, return 0
+#             if not contract_ids:
+#                 return 0.0
 
-            # Second query: Get bill reports for all contracts within the period
-            bill_reports_query = gql("""
-                query ContractBilling($contractIds: [BigInt!], $timestampGt: BigInt!, $timestampLt: BigInt!) {
-                    contractBillReports(
-                        where: {
-                            contractID_in: $contractIds,
-                            timestamp_gt: $timestampGt,
-                            timestamp_lt: $timestampLt
-                        }
-                    ) {
-                        contractID
-                        amountBilled
-                    }
-                }
-            """)
+#             # Second query: Get bill reports for all contracts within the period
+#             bill_reports_query = gql("""
+#                 query ContractBilling($contractIds: [BigInt!], $timestampGt: BigInt!, $timestampLt: BigInt!) {
+#                     contractBillReports(
+#                         where: {
+#                             contractID_in: $contractIds,
+#                             timestamp_gt: $timestampGt,
+#                             timestamp_lt: $timestampLt
+#                         }
+#                     ) {
+#                         contractID
+#                         amountBilled
+#                     }
+#                 }
+#             """)
 
-            # Execute the bill reports query
-            bill_reports_result = graphql.client.execute(
-                bill_reports_query,
-                variable_values={
-                    "contractIds": contract_ids,
-                    "timestampGt": str(period.start),
-                    "timestampLt": str(period.end),
-                },
-            )
+#             # Execute the bill reports query
+#             bill_reports_result = graphql.client.execute(
+#                 bill_reports_query,
+#                 variable_values={
+#                     "contractIds": contract_ids,
+#                     "timestampGt": str(period.start),
+#                     "timestampLt": str(period.end),
+#                 },
+#             )
 
-            # Sum up all the billed amounts
-            total_revenue = 0.0
-            for report in bill_reports_result["contractBillReports"]:
-                total_revenue += float(report["amountBilled"])
+#             # Sum up all the billed amounts
+#             total_revenue = 0.0
+#             for report in bill_reports_result["contractBillReports"]:
+#                 total_revenue += float(report["amountBilled"])
 
-            print(total_revenue)
+#             print(total_revenue)
 
-            return total_revenue
-        except Exception as e:
-            logging.error(
-                f"Error querying contract billing data for node {node_id}: {str(e)}"
-            )
-            return 0.0
+#             return total_revenue
+#         except Exception as e:
+#             logging.error(
+#                 f"Error querying contract billing data for node {node_id}: {str(e)}"
+#             )
+#             return 0.0
 
 
 serve()
