@@ -1,7 +1,6 @@
 import concurrent.futures
 import json
 import logging
-import os
 import random
 import signal
 import sqlite3
@@ -28,7 +27,9 @@ SCRAPER_WORKERS = 50
 
 # Daemon mode constants
 DAEMON_CHECK_INTERVAL = 10  # seconds between checks in the inner loop
-DAEMON_CHECKS_PER_CYCLE = 60  # number of checks before checking receipts (10 minutes total)
+DAEMON_CHECKS_PER_CYCLE = (
+    60  # number of checks before checking receipts (10 minutes total)
+)
 DAEMON_REFRESH_INTERVAL = 6  # refresh node list every hour (6 * 10 minutes)
 DAEMON_ERROR_RETRY_DELAY = 60  # seconds to wait after an error
 
@@ -53,10 +54,7 @@ class ReceiptHandler:
         self.base_url = base_url
         self.query_rate = query_rate
 
-        # Check if database exists
-        if not os.path.exists(db_path):
-            raise FileNotFoundError(f"Database file {db_path} not found. Please run the daemon first.")
-
+        # Initialize connection pool
         self.pool = Queue()
         for _ in range(self.connection_pool_size):
             conn = sqlite3.connect(self.db_path, check_same_thread=False)
@@ -64,6 +62,15 @@ class ReceiptHandler:
             conn.execute("PRAGMA synchronous=NORMAL")
             conn.execute("PRAGMA busy_timeout=5000")  # 5 second timeout
             self.pool.put(conn)
+
+        # Initialize database schema if it doesn't exist
+        self.init_db()
+
+        # Check if database is empty and print warning
+        if self.is_database_empty():
+            print(
+                f"WARNING: Database '{db_path}' is empty. Please run the receipts daemon to populate receipts data."
+            )
 
     @contextmanager
     def get_connection(self):
@@ -174,7 +181,6 @@ class ReceiptHandler:
             )
             conn.commit()
 
-
     def get_stored_receipt(self, receipt_hash: str) -> Dict | None:
         with self.get_connection() as conn:
             cursor = conn.execute(
@@ -202,11 +208,9 @@ class ReceiptHandler:
             )
             return [json.loads(row[0]) for row in cursor.fetchall()]
 
-
     def get_receipt(self, receipt_hash: str) -> Dict | None:
         # Read-only version: only return stored receipt
         return self.get_stored_receipt(receipt_hash)
-
 
     def get_node_receipts(self, node_id: int) -> List[Dict]:
         # Read-only version: only return stored receipts
@@ -225,9 +229,7 @@ def fetch_and_process_node(handler: ReceiptHandler, node_id: int) -> List[Dict]:
     for receipt in receipts:
         handler.save_receipt(receipt)
 
-    last_period_end = max(
-        [receipt["period"]["end"] for receipt in receipts], default=0
-    )
+    last_period_end = max([receipt["period"]["end"] for receipt in receipts], default=0)
     if last_period_end != 0:
         # Use direct SQL for daemon operations
         with handler.get_connection() as conn:
@@ -247,6 +249,7 @@ def fetch_and_process_node(handler: ReceiptHandler, node_id: int) -> List[Dict]:
 
     return receipts
 
+
 def has_all_node_receipts(handler: ReceiptHandler, node_id: int) -> bool:
     """Check if node has all receipts (daemon only)."""
     with handler.get_connection() as conn:
@@ -257,6 +260,7 @@ def has_all_node_receipts(handler: ReceiptHandler, node_id: int) -> bool:
         row = cursor.fetchone()
         timestamp = row[0] if row else None
         return bool(timestamp and time.time() < timestamp + STANDARD_PERIOD_DURATION)
+
 
 def query_time_elapsed(handler: ReceiptHandler, node_id: int) -> bool:
     """Check if query rate has elapsed (daemon only)."""
@@ -271,6 +275,7 @@ def query_time_elapsed(handler: ReceiptHandler, node_id: int) -> bool:
             return True
         else:
             return last_timestamp + handler.query_rate < time.time()
+
 
 @dataclass
 class NodeMintingPeriod:
@@ -457,9 +462,9 @@ def check_for_new_receipts(handler: ReceiptHandler, node_ids: List[int]) -> bool
         random_node_id = random.choice(node_ids)
         logging.info(f"Checking random node {random_node_id} for new receipts...")
 
-        if not has_all_node_receipts(
+        if not has_all_node_receipts(handler, random_node_id) and query_time_elapsed(
             handler, random_node_id
-        ) and query_time_elapsed(handler, random_node_id):
+        ):
             receipts = fetch_and_process_node(handler, random_node_id)
             if receipts:
                 logging.info(
@@ -480,49 +485,7 @@ def check_for_new_receipts(handler: ReceiptHandler, node_ids: List[int]) -> bool
 
 
 def main():
-    # Create handler - this will create the database if it doesn't exist
-    # First, check if database exists, if not, create it
-    db_path = "receipts.db"
-    if not os.path.exists(db_path):
-        # Create a temporary connection to initialize the database
-        conn = sqlite3.connect(db_path, check_same_thread=False)
-        conn.execute("PRAGMA journal_mode=WAL")
-        conn.execute("PRAGMA synchronous=NORMAL")
-        conn.execute("PRAGMA busy_timeout=5000")
-        
-        # Initialize database schema
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS receipts (
-                hash TEXT PRIMARY KEY,
-                node_id INTEGER,
-                receipt_type TEXT,
-                receipt_data TEXT,
-                period_end INTEGER
-            )
-        """
-        )
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS node_last_period_end (
-                node_id INTEGER PRIMARY KEY,
-                timestamp INTEGER
-            )
-        """
-        )
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS node_last_query (
-                node_id INTEGER PRIMARY KEY,
-                timestamp INTEGER
-            )
-        """
-        )
-        conn.commit()
-        conn.close()
-        logging.info(f"Created new database at {db_path}")
-    
-    # Now create the handler
+    # Create handler - this will create and initialize the database if it doesn't exist
     handler = ReceiptHandler()
     node_ids = get_all_node_ids()
 
@@ -552,10 +515,10 @@ def main():
 
     # Continuous monitoring loop - DAEMON MODE
     logging.info("Starting daemon mode...")
-    
+
     # Initialize refresh counter
     refresh_counter = 0
-    
+
     while running:
         try:
             # Refresh node IDs periodically
@@ -564,28 +527,28 @@ def main():
                 node_ids = get_all_node_ids()
                 logging.info(f"Found {len(node_ids)} nodes")
                 refresh_counter = 0
-            
+
             # Wait before checking for updates
             for _ in range(DAEMON_CHECKS_PER_CYCLE):
                 if not running:
                     break
                 time.sleep(DAEMON_CHECK_INTERVAL)
-            
+
             if not running:
                 break
-                
+
             # Check for new receipts using current node list
             logging.info("Checking for new receipts...")
             new_receipts_found = check_for_new_receipts(handler, node_ids)
-            
+
             if new_receipts_found:
                 logging.info("New receipts were found and processed")
             else:
                 logging.info("No new receipts found at this time")
-            
+
             # Increment refresh counter
             refresh_counter += 1
-                
+
         except Exception as e:
             logging.error(f"Error in daemon loop: {e}")
             time.sleep(DAEMON_ERROR_RETRY_DELAY)
