@@ -3,6 +3,8 @@ import json
 import random
 import sqlite3
 import time
+import logging
+import signal
 from typing import Set
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -12,6 +14,12 @@ from typing import Dict, List
 import grid3.network
 import requests
 from grid3.minting.period import Period
+
+# Configure logging for the daemon
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s'
+)
 
 STANDARD_PERIOD_DURATION = 24 * 60 * 60 * (365 * 3 + 366 * 2) // 60
 ONE_HOUR = 60 * 60
@@ -448,52 +456,71 @@ def get_all_node_ids() -> List[int]:
     nodes = mainnet.graphql.nodes(['nodeID'])
     return [int(node['nodeID']) for node in nodes]
 
+def check_for_new_receipts(handler: ReceiptHandler) -> bool:
+    """Check if any nodes have new receipts available.
+    Returns True if new receipts were found and processed."""
+    node_ids = get_all_node_ids()
+    new_receipts_found = False
+    
+    for node_id in node_ids:
+        if not handler.has_all_node_receipts(node_id) and handler.query_time_elapsed(node_id):
+            receipts = handler.fetch_and_process_node(node_id)
+            if receipts:
+                new_receipts_found = True
+    
+    return new_receipts_found
+
 def main():
     handler = ReceiptHandler()
     node_ids = get_all_node_ids()
+    
+    # Flag to control the daemon loop
+    running = True
+    
+    def signal_handler(signum, frame):
+        nonlocal running
+        logging.info(f"Received signal {signum}, shutting down...")
+        running = False
+    
+    # Setup signal handlers
+    signal.signal(signal.SIGINT, signal_handler)
+    signal.signal(signal.SIGTERM, signal_handler)
 
     # Only do initial full scrape if database is empty
     if handler.is_database_empty():
-        print(f"Found {len(node_ids)} nodes to process")
-
+        logging.info(f"Found {len(node_ids)} nodes to process")
         results = scrape_nodes(handler, node_ids)
-        print(f"Initial scrape completed. {sum(results)} nodes processed successfully")
+        logging.info(f"Initial scrape completed. {sum(results)} nodes processed successfully")
     else:
-        print("Database already populated, skipping initial full scrape")
+        logging.info("Database already populated, skipping initial full scrape")
 
-    # Continuous monitoring loop
-    while True:
-        time.sleep(600)  # Wait 10 minutes between checks
-        continue
-
-        # Check a random node for new receipts
-        node_ids_shuffled = random.sample(node_ids, len(node_ids))  # Random selection order
-
-        found_node = False
-        for sample_node in node_ids_shuffled:
-            last_period = handler.get_last_period_end(sample_node)
-            if last_period is not None and not handler.has_all_node_receipts(sample_node):
-                found_node = True
-                print(f"Checking node {sample_node} for new receipts...")
-
-                # Store original period end before fetching
-                original_period_end = last_period
-
-                # Fetch and process the node's receipts
-                handler.fetch_and_process_node(sample_node)
-
-                # Check if new period end is different
-                new_period_end = handler.get_last_period_end(sample_node)
-
-                if new_period_end is not None and new_period_end > original_period_end:
-                    node_ids = get_all_node_ids()  # Refresh node list
-                    print(f"New period detected (from {original_period_end} to {new_period_end}), rescanning all nodes")
-                    scrape_nodes(handler, node_ids)
-
+    # Continuous monitoring loop - DAEMON MODE
+    logging.info("Starting daemon mode...")
+    while running:
+        try:
+            # Wait before checking for updates
+            for _ in range(60):  # Check every 10 minutes (600/10 = 60)
+                if not running:
+                    break
+                time.sleep(10)
+            
+            if not running:
                 break
-
-        if not found_node:
-            print("No nodes found that need receipt updates at this time")
+                
+            # Check for new receipts
+            logging.info("Checking for new receipts...")
+            new_receipts_found = check_for_new_receipts(handler)
+            
+            if new_receipts_found:
+                logging.info("New receipts were found and processed")
+            else:
+                logging.info("No new receipts found at this time")
+                
+        except Exception as e:
+            logging.error(f"Error in daemon loop: {e}")
+            time.sleep(60)  # Wait a minute before retrying on error
+    
+    logging.info("Receipt daemon stopped")
 
 
 if __name__ == "__main__":
