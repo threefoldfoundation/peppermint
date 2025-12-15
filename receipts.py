@@ -1,11 +1,10 @@
 import concurrent.futures
 import json
+import logging
 import random
+import signal
 import sqlite3
 import time
-import logging
-import signal
-from typing import Set
 from contextlib import contextmanager
 from dataclasses import dataclass
 from queue import Queue
@@ -17,8 +16,7 @@ from grid3.minting.period import Period
 
 # Configure logging for the daemon
 logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s'
+    level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
 )
 
 STANDARD_PERIOD_DURATION = 24 * 60 * 60 * (365 * 3 + 366 * 2) // 60
@@ -66,7 +64,6 @@ class ReceiptHandler:
             yield conn
         finally:
             self.pool.put(conn)
-
 
     def init_db(self):
         """ "
@@ -370,7 +367,9 @@ class NodeMintingPeriod:
             self.empty = False
 
 
-def make_node_minting_periods(node_id: int, receipts_input: List[Dict]) -> List[NodeMintingPeriod]:
+def make_node_minting_periods(
+    node_id: int, receipts_input: List[Dict]
+) -> List[NodeMintingPeriod]:
     """We pass in the node id explicity, because this function might be called
     for nodes that are too new to have any receipts. In that case the receipts
     input list is empty and only one NodeMintingPeriod should be returned
@@ -431,13 +430,14 @@ def make_node_minting_periods(node_id: int, receipts_input: List[Dict]) -> List[
             # any time during the previous period. TODO: the node creation time
             # should be a parameter of this function that the caller can query
             # once and cache
-            node = requests.get(f'https://gridproxy.grid.tf/nodes/{node_id}').json()
-            if node['created'] < previous_period.end:
+            node = requests.get(f"https://gridproxy.grid.tf/nodes/{node_id}").json()
+            if node["created"] < previous_period.end:
                 period_receipts.append(
                     NodeMintingPeriod.for_unpublished_period(node_id, previous_period)
                 )
 
     return period_receipts
+
 
 def scrape_node(handler: ReceiptHandler, node_id: int):
     try:
@@ -447,56 +447,64 @@ def scrape_node(handler: ReceiptHandler, node_id: int):
         print(f"Error processing node {node_id}: {e}")
         return False
 
+
 def scrape_nodes(handler: ReceiptHandler, node_ids: List[int]):
     with concurrent.futures.ThreadPoolExecutor(max_workers=SCRAPER_WORKERS) as executor:
-        return list(executor.map(lambda node_id: scrape_node(handler, node_id), node_ids))
+        return list(
+            executor.map(lambda node_id: scrape_node(handler, node_id), node_ids)
+        )
+
 
 def get_all_node_ids() -> List[int]:
     mainnet = grid3.network.GridNetwork()
-    nodes = mainnet.graphql.nodes(['nodeID'])
-    return [int(node['nodeID']) for node in nodes]
+    nodes = mainnet.graphql.nodes(["nodeID"])
+    return [int(node["nodeID"]) for node in nodes]
 
-def get_random_node_id(node_ids: List[int]) -> int:
-    """Get a random node ID from the list"""
-    return random.choice(node_ids)
 
 def check_for_new_receipts(handler: ReceiptHandler, node_ids: List[int]) -> bool:
     """Check if any nodes have new receipts available.
     First checks a random node, and if new receipts are found there,
     checks all nodes. Returns True if new receipts were found and processed."""
-    
+
     # First check a random node
     if node_ids:
-        random_node_id = get_random_node_id(node_ids)
+        random_node_id = random.choice(node_ids)
         logging.info(f"Checking random node {random_node_id} for new receipts...")
-        
-        if not handler.has_all_node_receipts(random_node_id) and handler.query_time_elapsed(random_node_id):
+
+        if not handler.has_all_node_receipts(
+            random_node_id
+        ) and handler.query_time_elapsed(random_node_id):
             receipts = handler.fetch_and_process_node(random_node_id)
             if receipts:
-                logging.info(f"Found new receipts on random node {random_node_id}, checking all nodes...")
+                logging.info(
+                    f"Found new receipts on random node {random_node_id}, checking all nodes..."
+                )
                 # Found new receipts on random node, now check all nodes
                 new_receipts_found = False
                 for node_id in node_ids:
-                    if not handler.has_all_node_receipts(node_id) and handler.query_time_elapsed(node_id):
+                    if not handler.has_all_node_receipts(
+                        node_id
+                    ) and handler.query_time_elapsed(node_id):
                         receipts = handler.fetch_and_process_node(node_id)
                         if receipts:
                             new_receipts_found = True
                 return new_receipts_found
-    
+
     return False
+
 
 def main():
     handler = ReceiptHandler()
     node_ids = get_all_node_ids()
-    
+
     # Flag to control the daemon loop
     running = True
-    
+
     def signal_handler(signum, frame):
         nonlocal running
         logging.info(f"Received signal {signum}, shutting down...")
         running = False
-    
+
     # Setup signal handlers
     signal.signal(signal.SIGINT, signal_handler)
     signal.signal(signal.SIGTERM, signal_handler)
@@ -505,7 +513,9 @@ def main():
     if handler.is_database_empty():
         logging.info(f"Found {len(node_ids)} nodes to process")
         results = scrape_nodes(handler, node_ids)
-        logging.info(f"Initial scrape completed. {sum(results)} nodes processed successfully")
+        logging.info(
+            f"Initial scrape completed. {sum(results)} nodes processed successfully"
+        )
     else:
         logging.info("Database already populated, skipping initial full scrape")
         # Still need to get node IDs for the daemon loop
@@ -513,11 +523,11 @@ def main():
 
     # Continuous monitoring loop - DAEMON MODE
     logging.info("Starting daemon mode...")
-    
+
     # Initialize refresh counter
     refresh_counter = 0
     REFRESH_INTERVAL = 6  # Refresh node list every hour (6 * 10 minutes)
-    
+
     while running:
         try:
             # Refresh node IDs periodically
@@ -526,32 +536,32 @@ def main():
                 node_ids = get_all_node_ids()
                 logging.info(f"Found {len(node_ids)} nodes")
                 refresh_counter = 0
-            
+
             # Wait before checking for updates
             for _ in range(60):  # Check every 10 minutes (600/10 = 60)
                 if not running:
                     break
                 time.sleep(10)
-            
+
             if not running:
                 break
-                
+
             # Check for new receipts using current node list
             logging.info("Checking for new receipts...")
             new_receipts_found = check_for_new_receipts(handler, node_ids)
-            
+
             if new_receipts_found:
                 logging.info("New receipts were found and processed")
             else:
                 logging.info("No new receipts found at this time")
-            
+
             # Increment refresh counter
             refresh_counter += 1
-                
+
         except Exception as e:
             logging.error(f"Error in daemon loop: {e}")
             time.sleep(60)  # Wait a minute before retrying on error
-    
+
     logging.info("Receipt daemon stopped")
 
 
