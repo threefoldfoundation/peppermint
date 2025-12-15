@@ -1,6 +1,7 @@
 import concurrent.futures
 import json
 import logging
+import os
 import random
 import signal
 import sqlite3
@@ -52,6 +53,10 @@ class ReceiptHandler:
         self.base_url = base_url
         self.query_rate = query_rate
 
+        # Check if database exists
+        if not os.path.exists(db_path):
+            raise FileNotFoundError(f"Database file {db_path} not found. Please run the daemon first.")
+
         self.pool = Queue()
         for _ in range(self.connection_pool_size):
             conn = sqlite3.connect(self.db_path, check_same_thread=False)
@@ -59,9 +64,6 @@ class ReceiptHandler:
             conn.execute("PRAGMA synchronous=NORMAL")
             conn.execute("PRAGMA busy_timeout=5000")  # 5 second timeout
             self.pool.put(conn)
-
-        # Initialize database
-        self.init_db()
 
     @contextmanager
     def get_connection(self):
@@ -172,39 +174,6 @@ class ReceiptHandler:
             )
             conn.commit()
 
-    def save_last_period_end(self, node_id: int, timestamp: int):
-        with self.get_connection() as conn:
-            conn.execute(
-                "INSERT OR REPLACE INTO node_last_period_end (node_id, timestamp) VALUES (?, ?)",
-                (node_id, timestamp),
-            )
-            conn.commit()
-
-    def save_last_query_timestamp(self, node_id: int):
-        with self.get_connection() as conn:
-            conn.execute(
-                "INSERT OR REPLACE INTO node_last_query(node_id, timestamp) VALUES (?, ?)",
-                (node_id, time.time()),
-            )
-            conn.commit()
-
-    def get_last_period_end(self, node_id: int) -> int | None:
-        with self.get_connection() as conn:
-            cursor = conn.execute(
-                "SELECT timestamp FROM node_last_period_end WHERE node_id = ?",
-                (node_id,),
-            )
-            row = cursor.fetchone()
-            return row[0] if row else None
-
-    def get_last_query_timestamp(self, node_id: int) -> int | None:
-        with self.get_connection() as conn:
-            cursor = conn.execute(
-                "SELECT timestamp FROM node_last_query WHERE node_id = ?",
-                (node_id,),
-            )
-            row = cursor.fetchone()
-            return row[0] if row else None
 
     def get_stored_receipt(self, receipt_hash: str) -> Dict | None:
         with self.get_connection() as conn:
@@ -233,45 +202,11 @@ class ReceiptHandler:
             )
             return [json.loads(row[0]) for row in cursor.fetchall()]
 
-    def fetch_and_process_node(self, node_id: int) -> List[Dict]:
-        """Process all receipts for a given node."""
-        receipts = self.fetch_node_receipts(node_id)
-
-        for receipt in receipts:
-            self.save_receipt(receipt)
-
-        last_period_end = max(
-            [receipt["period"]["end"] for receipt in receipts], default=0
-        )
-        if last_period_end != 0:
-            self.save_last_period_end(node_id, last_period_end)
-
-        self.save_last_query_timestamp(node_id)
-
-        # print(f"Successfully processed {len(receipts)} receipts for node {node_id}")
-        # if last_period_end:
-        #     print(f"Latest timestamp: {last_period_end}")
-
-        return receipts
 
     def get_receipt(self, receipt_hash: str) -> Dict | None:
         # Read-only version: only return stored receipt
         return self.get_stored_receipt(receipt_hash)
 
-    def has_all_node_receipts(self, node_id: int) -> bool:
-        """If there's a timestamp on disk from a previous fetch, check if at
-        least one minting period worth of time has elapsed since then. This
-        indicates whether we already have all available receipts for this node.
-        """
-        timestamp = self.get_last_period_end(node_id)
-        return bool(timestamp and time.time() < timestamp + STANDARD_PERIOD_DURATION)
-
-    def query_time_elapsed(self, node_id: int) -> bool:
-        last_timestamp = self.get_last_query_timestamp(node_id)
-        if last_timestamp is None:
-            return True
-        else:
-            return last_timestamp + self.query_rate < time.time()
 
     def get_node_receipts(self, node_id: int) -> List[Dict]:
         # Read-only version: only return stored receipts
@@ -281,6 +216,61 @@ class ReceiptHandler:
         # Read-only version: only return stored receipts
         return self.get_stored_node_period_receipts(node_id, period)
 
+
+# Daemon-only helper functions (not part of ReceiptHandler class)
+def fetch_and_process_node(handler: ReceiptHandler, node_id: int) -> List[Dict]:
+    """Process all receipts for a given node (daemon only)."""
+    receipts = handler.fetch_node_receipts(node_id)
+
+    for receipt in receipts:
+        handler.save_receipt(receipt)
+
+    last_period_end = max(
+        [receipt["period"]["end"] for receipt in receipts], default=0
+    )
+    if last_period_end != 0:
+        # Use direct SQL for daemon operations
+        with handler.get_connection() as conn:
+            conn.execute(
+                "INSERT OR REPLACE INTO node_last_period_end (node_id, timestamp) VALUES (?, ?)",
+                (node_id, last_period_end),
+            )
+            conn.commit()
+
+    # Save query timestamp
+    with handler.get_connection() as conn:
+        conn.execute(
+            "INSERT OR REPLACE INTO node_last_query(node_id, timestamp) VALUES (?, ?)",
+            (node_id, time.time()),
+        )
+        conn.commit()
+
+    return receipts
+
+def has_all_node_receipts(handler: ReceiptHandler, node_id: int) -> bool:
+    """Check if node has all receipts (daemon only)."""
+    with handler.get_connection() as conn:
+        cursor = conn.execute(
+            "SELECT timestamp FROM node_last_period_end WHERE node_id = ?",
+            (node_id,),
+        )
+        row = cursor.fetchone()
+        timestamp = row[0] if row else None
+        return bool(timestamp and time.time() < timestamp + STANDARD_PERIOD_DURATION)
+
+def query_time_elapsed(handler: ReceiptHandler, node_id: int) -> bool:
+    """Check if query rate has elapsed (daemon only)."""
+    with handler.get_connection() as conn:
+        cursor = conn.execute(
+            "SELECT timestamp FROM node_last_query WHERE node_id = ?",
+            (node_id,),
+        )
+        row = cursor.fetchone()
+        last_timestamp = row[0] if row else None
+        if last_timestamp is None:
+            return True
+        else:
+            return last_timestamp + handler.query_rate < time.time()
 
 @dataclass
 class NodeMintingPeriod:
@@ -437,7 +427,7 @@ def make_node_minting_periods(
 
 def scrape_node(handler: ReceiptHandler, node_id: int):
     try:
-        handler.fetch_and_process_node(node_id)
+        fetch_and_process_node(handler, node_id)
         return True
     except Exception as e:
         print(f"Error processing node {node_id}: {e}")
@@ -467,10 +457,10 @@ def check_for_new_receipts(handler: ReceiptHandler, node_ids: List[int]) -> bool
         random_node_id = random.choice(node_ids)
         logging.info(f"Checking random node {random_node_id} for new receipts...")
 
-        if not handler.has_all_node_receipts(
-            random_node_id
-        ) and handler.query_time_elapsed(random_node_id):
-            receipts = handler.fetch_and_process_node(random_node_id)
+        if not has_all_node_receipts(
+            handler, random_node_id
+        ) and query_time_elapsed(handler, random_node_id):
+            receipts = fetch_and_process_node(handler, random_node_id)
             if receipts:
                 logging.info(
                     f"Found new receipts on random node {random_node_id}, checking all nodes..."
@@ -478,10 +468,10 @@ def check_for_new_receipts(handler: ReceiptHandler, node_ids: List[int]) -> bool
                 # Found new receipts on random node, now check all nodes
                 new_receipts_found = False
                 for node_id in node_ids:
-                    if not handler.has_all_node_receipts(
-                        node_id
-                    ) and handler.query_time_elapsed(node_id):
-                        receipts = handler.fetch_and_process_node(node_id)
+                    if not has_all_node_receipts(
+                        handler, node_id
+                    ) and query_time_elapsed(handler, node_id):
+                        receipts = fetch_and_process_node(handler, node_id)
                         if receipts:
                             new_receipts_found = True
                 return new_receipts_found
@@ -490,6 +480,49 @@ def check_for_new_receipts(handler: ReceiptHandler, node_ids: List[int]) -> bool
 
 
 def main():
+    # Create handler - this will create the database if it doesn't exist
+    # First, check if database exists, if not, create it
+    db_path = "receipts.db"
+    if not os.path.exists(db_path):
+        # Create a temporary connection to initialize the database
+        conn = sqlite3.connect(db_path, check_same_thread=False)
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA synchronous=NORMAL")
+        conn.execute("PRAGMA busy_timeout=5000")
+        
+        # Initialize database schema
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS receipts (
+                hash TEXT PRIMARY KEY,
+                node_id INTEGER,
+                receipt_type TEXT,
+                receipt_data TEXT,
+                period_end INTEGER
+            )
+        """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS node_last_period_end (
+                node_id INTEGER PRIMARY KEY,
+                timestamp INTEGER
+            )
+        """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS node_last_query (
+                node_id INTEGER PRIMARY KEY,
+                timestamp INTEGER
+            )
+        """
+        )
+        conn.commit()
+        conn.close()
+        logging.info(f"Created new database at {db_path}")
+    
+    # Now create the handler
     handler = ReceiptHandler()
     node_ids = get_all_node_ids()
 

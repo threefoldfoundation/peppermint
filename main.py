@@ -39,6 +39,12 @@ TFT_DIVISOR = 1e7  # Number of decimal places, as used on tfchain
 
 os.makedirs(CSV_DIR, exist_ok=True)
 
+# Check if database exists before starting
+if not os.path.exists("receipts.db"):
+    print("ERROR: Database file 'receipts.db' not found.")
+    print("Please run the daemon first to populate the database.")
+    exit(1)
+
 graphql_url = "https://graphql.grid.tf/graphql"
 graphql = grid3.graphql.GraphQL(graphql_url, fetch_schema=False)
 # We can run into some trouble with multiple threads trying to use gql at the
