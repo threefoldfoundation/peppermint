@@ -456,19 +456,34 @@ def get_all_node_ids() -> List[int]:
     nodes = mainnet.graphql.nodes(['nodeID'])
     return [int(node['nodeID']) for node in nodes]
 
-def check_for_new_receipts(handler: ReceiptHandler) -> bool:
+def get_random_node_id(node_ids: List[int]) -> int:
+    """Get a random node ID from the list"""
+    return random.choice(node_ids)
+
+def check_for_new_receipts(handler: ReceiptHandler, node_ids: List[int]) -> bool:
     """Check if any nodes have new receipts available.
-    Returns True if new receipts were found and processed."""
-    node_ids = get_all_node_ids()
-    new_receipts_found = False
+    First checks a random node, and if new receipts are found there,
+    checks all nodes. Returns True if new receipts were found and processed."""
     
-    for node_id in node_ids:
-        if not handler.has_all_node_receipts(node_id) and handler.query_time_elapsed(node_id):
-            receipts = handler.fetch_and_process_node(node_id)
+    # First check a random node
+    if node_ids:
+        random_node_id = get_random_node_id(node_ids)
+        logging.info(f"Checking random node {random_node_id} for new receipts...")
+        
+        if not handler.has_all_node_receipts(random_node_id) and handler.query_time_elapsed(random_node_id):
+            receipts = handler.fetch_and_process_node(random_node_id)
             if receipts:
-                new_receipts_found = True
+                logging.info(f"Found new receipts on random node {random_node_id}, checking all nodes...")
+                # Found new receipts on random node, now check all nodes
+                new_receipts_found = False
+                for node_id in node_ids:
+                    if not handler.has_all_node_receipts(node_id) and handler.query_time_elapsed(node_id):
+                        receipts = handler.fetch_and_process_node(node_id)
+                        if receipts:
+                            new_receipts_found = True
+                return new_receipts_found
     
-    return new_receipts_found
+    return False
 
 def main():
     handler = ReceiptHandler()
@@ -493,11 +508,25 @@ def main():
         logging.info(f"Initial scrape completed. {sum(results)} nodes processed successfully")
     else:
         logging.info("Database already populated, skipping initial full scrape")
+        # Still need to get node IDs for the daemon loop
+        node_ids = get_all_node_ids()
 
     # Continuous monitoring loop - DAEMON MODE
     logging.info("Starting daemon mode...")
+    
+    # Initialize refresh counter
+    refresh_counter = 0
+    REFRESH_INTERVAL = 6  # Refresh node list every hour (6 * 10 minutes)
+    
     while running:
         try:
+            # Refresh node IDs periodically
+            if refresh_counter >= REFRESH_INTERVAL or refresh_counter == 0:
+                logging.info("Refreshing node ID list...")
+                node_ids = get_all_node_ids()
+                logging.info(f"Found {len(node_ids)} nodes")
+                refresh_counter = 0
+            
             # Wait before checking for updates
             for _ in range(60):  # Check every 10 minutes (600/10 = 60)
                 if not running:
@@ -507,14 +536,17 @@ def main():
             if not running:
                 break
                 
-            # Check for new receipts
+            # Check for new receipts using current node list
             logging.info("Checking for new receipts...")
-            new_receipts_found = check_for_new_receipts(handler)
+            new_receipts_found = check_for_new_receipts(handler, node_ids)
             
             if new_receipts_found:
                 logging.info("New receipts were found and processed")
             else:
                 logging.info("No new receipts found at this time")
+            
+            # Increment refresh counter
+            refresh_counter += 1
                 
         except Exception as e:
             logging.error(f"Error in daemon loop: {e}")
