@@ -142,14 +142,22 @@ class ReceiptHandler:
             print(f"Failed to fetch receipt {receipt_hash}: {str(e)}")
             return None
 
-    def fetch_node_receipts(self, node_id: int) -> List[Dict]:
-        """Fetch receipts from the API for a given node ID."""
+    def fetch_node_receipts(self, node_id: int) -> List[Dict] | None:
+        """Fetch receipts from the API for a given node ID.
+        Returns None if node has no receipts (404), otherwise returns list of receipts.
+        """
         url = f"{self.base_url}/node/{node_id}"
         try:
             response = requests.get(url)
+            if response.status_code == 404:
+                # Node has no receipts - this is normal
+                return None
             response.raise_for_status()
             return [self.process_receipt(r) for r in response.json()]
         except requests.RequestException as e:
+            # Only log non-404 errors
+            if hasattr(e.response, 'status_code') and e.response.status_code == 404:
+                return None
             print(f"Failed to fetch receipts for node {node_id}: {str(e)}")
             return []
 
@@ -226,24 +234,31 @@ class ReceiptHandler:
 
 
 # Daemon-only helper functions (not part of ReceiptHandler class)
-def fetch_and_process_node(handler: ReceiptHandler, node_id: int) -> List[Dict]:
-    """Process all receipts for a given node (daemon only)."""
+def fetch_and_process_node(handler: ReceiptHandler, node_id: int) -> List[Dict] | None:
+    """Process all receipts for a given node (daemon only).
+    Returns None if node has no receipts (404), otherwise returns list of receipts.
+    """
     receipts = handler.fetch_node_receipts(node_id)
-
+    
+    if receipts is None:
+        # Node has no receipts - this is normal
+        return None
+    
     for receipt in receipts:
         handler.save_receipt(receipt)
 
-    last_period_end = max([receipt["period"]["end"] for receipt in receipts], default=0)
-    if last_period_end != 0:
-        # Use direct SQL for daemon operations
-        with handler.get_connection() as conn:
-            conn.execute(
-                "INSERT OR REPLACE INTO node_last_period_end (node_id, timestamp) VALUES (?, ?)",
-                (node_id, last_period_end),
-            )
-            conn.commit()
+    if receipts:
+        last_period_end = max([receipt["period"]["end"] for receipt in receipts], default=0)
+        if last_period_end != 0:
+            # Use direct SQL for daemon operations
+            with handler.get_connection() as conn:
+                conn.execute(
+                    "INSERT OR REPLACE INTO node_last_period_end (node_id, timestamp) VALUES (?, ?)",
+                    (node_id, last_period_end),
+                )
+                conn.commit()
 
-    # Save query timestamp
+    # Save query timestamp regardless of whether we found receipts
     with handler.get_connection() as conn:
         conn.execute(
             "INSERT OR REPLACE INTO node_last_query(node_id, timestamp) VALUES (?, ?)",
@@ -435,12 +450,20 @@ def make_node_minting_periods(
 
 
 def scrape_node(handler: ReceiptHandler, node_id: int):
+    """Scrape a single node. Returns:
+    - True: Success with receipts
+    - False: Error
+    - None: Success but no receipts (404)
+    """
     try:
-        fetch_and_process_node(handler, node_id)
-        return True
+        result = fetch_and_process_node(handler, node_id)
+        # result is None for 404, list of receipts for success
+        if result is None:
+            return None  # No receipts (404)
+        return True  # Success with receipts
     except Exception as e:
         print(f"Error processing node {node_id}: {e}")
-        return False
+        return False  # Error
 
 
 def scrape_nodes(handler: ReceiptHandler, node_ids: List[int]):
@@ -448,6 +471,8 @@ def scrape_nodes(handler: ReceiptHandler, node_ids: List[int]):
     results = []
     completed = 0
     total_nodes = len(node_ids)
+    nodes_without_receipts = []  # Track nodes that return 404
+    nodes_with_errors = []  # Track nodes with errors
     
     with concurrent.futures.ThreadPoolExecutor(max_workers=SCRAPER_WORKERS) as executor:
         # Submit all tasks
@@ -455,7 +480,22 @@ def scrape_nodes(handler: ReceiptHandler, node_ids: List[int]):
         
         # Process as they complete with progress updates
         for future in concurrent.futures.as_completed(futures):
-            results.append(future.result())
+            node_id = futures[future]
+            try:
+                result = future.result()
+                results.append(result)
+                
+                # Track 404 nodes and error nodes
+                if result is None:
+                    nodes_without_receipts.append(node_id)
+                elif result is False:
+                    nodes_with_errors.append(node_id)
+                    
+            except Exception as e:
+                print(f"Unexpected error processing node {node_id}: {e}")
+                results.append(False)
+                nodes_with_errors.append(node_id)
+            
             completed += 1
             
             # Report progress every 10% or every 100 nodes, whichever is smaller
@@ -463,6 +503,33 @@ def scrape_nodes(handler: ReceiptHandler, node_ids: List[int]):
             if completed % report_interval == 0 or completed == total_nodes:
                 percentage = (completed / total_nodes) * 100
                 print(f"Progress: {completed}/{total_nodes} nodes ({percentage:.1f}%)")
+    
+    # Log summary
+    successful_with_receipts = sum(1 for r in results if r is True)
+    successful_without_receipts = len(nodes_without_receipts)
+    failed_count = len(nodes_with_errors)
+    
+    print(f"\nScrape completed:")
+    print(f"  - {successful_with_receipts} nodes with receipts")
+    print(f"  - {successful_without_receipts} nodes without receipts (404)")
+    print(f"  - {failed_count} nodes failed with errors")
+    
+    # Display nodes without receipts in batches
+    if nodes_without_receipts:
+        print(f"\nNodes without receipts ({len(nodes_without_receipts)} total):")
+        # Display in batches of 20 for readability
+        batch_size = 20
+        for i in range(0, len(nodes_without_receipts), batch_size):
+            batch = nodes_without_receipts[i:i + batch_size]
+            print(f"  {', '.join(map(str, batch))}")
+    
+    # Display nodes with errors if any
+    if nodes_with_errors:
+        print(f"\nNodes with errors ({len(nodes_with_errors)} total):")
+        batch_size = 20
+        for i in range(0, len(nodes_with_errors), batch_size):
+            batch = nodes_with_errors[i:i + batch_size]
+            print(f"  {', '.join(map(str, batch))}")
     
     return results
 
@@ -526,11 +593,7 @@ def main():
     if handler.is_database_empty():
         logging.info(f"Found {len(node_ids)} nodes to process")
         results = scrape_nodes(handler, node_ids)
-        successful = sum(results)
-        failed = len(results) - successful
-        logging.info(
-            f"Initial scrape completed. {successful} nodes processed successfully, {failed} failed"
-        )
+        # The scrape_nodes function now handles its own logging
     else:
         logging.info("Database already populated, skipping initial full scrape")
         # Still need to get node IDs for the daemon loop
