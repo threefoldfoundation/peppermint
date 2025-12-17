@@ -1,4 +1,3 @@
-import argparse
 import logging
 import os
 import sqlite3
@@ -15,22 +14,14 @@ from grid3.minting.period import Period
 from lightdark import DarkLink, LightDarkScript, LightLink
 from receipts import STANDARD_PERIOD_DURATION, ReceiptHandler, make_node_minting_periods
 
-# Check for environment variable first
+# Check for environment variables
 db_path = os.environ.get("DB_PATH", "receipts.db")
+# LIVE_RELOAD can be set to "1", "true", "True", etc.
+live_reload_env = os.environ.get("LIVE_RELOAD", "False").lower()
+live_reload = live_reload_env in ("1", "true", "yes")
 
-parser = argparse.ArgumentParser(description="Peppermint web application")
-parser.add_argument(
-    "--db-path",
-    type=str,
-    default=db_path,
-    help="Path to the SQLite database file (default: receipts.db, can be set via DB_PATH env var)",
-)
-parser.add_argument(
-    "--live-reload", action="store_true", help="Enable live reload for development"
-)
-args = parser.parse_args()
-
-logging.info(f"Using database at: {args.db_path}")
+logging.info(f"Using database at: {db_path}")
+logging.info(f"Live reload enabled: {live_reload}")
 
 RECEIPTS_URL = "https://alpha.minting.tfchain.grid.tf/api/v1/"
 CSV_DIR = "csvs"
@@ -48,9 +39,9 @@ graphql = grid3.graphql.GraphQL(graphql_url, fetch_schema=False)
 # We can run into some trouble with multiple threads trying to use gql at the
 # same time. Bit primitive, but we just lock it for now
 gql_lock = threading.Lock()
-app, rt = fast_app(live=args.live_reload)
+app, rt = fast_app(live=live_reload)
 
-receipt_handler = ReceiptHandler(db_path=args.db_path)
+receipt_handler = ReceiptHandler(db_path=db_path)
 
 
 @rt("/")
