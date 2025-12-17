@@ -1,17 +1,16 @@
 ## Quickstart
 
-```
-# Basic Python environment required. For example:
-# apt update && apt install -y --no-install-recommends git python3 python3-pip python3-venv
+While not required, [uv](https://docs.astral.sh/uv/getting-started/installation/) is recommended for development.
 
+```
 git clone https://github.com/scottyeager/peppermint.git
 
 cd peppermint
-python3 -m venv venv
-source venv/bin/activate # Choose .fish for fish shell
-pip install python-fasthtml requests grid3
+uv venv
+uv pip install -r requirements.txt
 
-python3 main.py
+# With live-reload, changes to the code will be served automatically
+uv run main.py --live-reload
 ```
 
 A link to visit the dev server will appear in your terminal.
@@ -22,20 +21,29 @@ FastHTML ships with Uvicorn, which is used for the development server when execu
 
 For production, it's best to disable the websocket based live code reloading and use a bit more robust configuration. A number of options are discussed [here](https://www.uvicorn.org/deployment/). The built in process manager is what I'll show below.
 
-Use a `config.py` file to disable live code reloading:
-
-```
-echo "LIVE_RELOAD = False" > config.py
-```
-
 Then run it:
 
 ```
-source venv/bin/activate
-uvicorn main:app --host 0.0.0.0 --port 80 --workers 1
+uv run uvicorn main:app --host 0.0.0.0 --port 80 --workers 1
 ```
 
 That's for HTTP only. To enable HTTPS via a reverse proxy, such as Caddy, binding to a different port on localhost might be preferred.
+
+## Receipts Database
+
+Peppermint requires a prepopulated Sqlite database of minting receipts. A script is included to generate and update such a database:
+
+```
+uv run receipts.py
+```
+
+The script will continue to run forever and check for new receipts periodically (this won't be needed for much longer though with the end of TFT minting).
+
+Both the receipts script and Peppermint itself can be configured to use a different location for the receipts database (default is pwd):
+
+```
+uv run receipts.py --db-path /path/to/receipts.db
+uv run main.py --db-path /path/to/receipts.db
 
 ## Contributing
 

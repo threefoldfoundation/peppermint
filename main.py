@@ -22,9 +22,13 @@ import argparse
 
 
 def main():
+    # Check for environment variable first
+    import os
+    db_path = os.environ.get('DB_PATH', 'receipts.db')
+    
     parser = argparse.ArgumentParser(description='Peppermint web application')
-    parser.add_argument('--db-path', type=str, default='receipts.db',
-                       help='Path to the SQLite database file (default: receipts.db)')
+    parser.add_argument('--db-path', type=str, default=db_path,
+                       help='Path to the SQLite database file (default: receipts.db, can be set via DB_PATH env var)')
     parser.add_argument('--live-reload', action='store_true',
                        help='Enable live reload for development')
     args = parser.parse_args()
