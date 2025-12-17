@@ -1,6 +1,3 @@
-import logging
-import sqlite3
-
 import argparse
 import logging
 import os
@@ -18,23 +15,27 @@ from grid3.minting.period import Period
 from lightdark import DarkLink, LightDarkScript, LightLink
 from receipts import STANDARD_PERIOD_DURATION, ReceiptHandler, make_node_minting_periods
 
-import argparse
-
 
 def main():
     # Check for environment variable first
     import os
-    db_path = os.environ.get('DB_PATH', 'receipts.db')
-    
-    parser = argparse.ArgumentParser(description='Peppermint web application')
-    parser.add_argument('--db-path', type=str, default=db_path,
-                       help='Path to the SQLite database file (default: receipts.db, can be set via DB_PATH env var)')
-    parser.add_argument('--live-reload', action='store_true',
-                       help='Enable live reload for development')
+
+    db_path = os.environ.get("DB_PATH", "receipts.db")
+
+    parser = argparse.ArgumentParser(description="Peppermint web application")
+    parser.add_argument(
+        "--db-path",
+        type=str,
+        default=db_path,
+        help="Path to the SQLite database file (default: receipts.db, can be set via DB_PATH env var)",
+    )
+    parser.add_argument(
+        "--live-reload", action="store_true", help="Enable live reload for development"
+    )
     args = parser.parse_args()
-    
+
     logging.info(f"Using database at: {args.db_path}")
-    
+
     RECEIPTS_URL = "https://alpha.minting.tfchain.grid.tf/api/v1/"
     CSV_DIR = "csvs"
 
@@ -55,7 +56,6 @@ def main():
 
     receipt_handler = ReceiptHandler(db_path=args.db_path)
 
-
     @rt("/")
     def get(
         select: str = "node",
@@ -72,11 +72,9 @@ def main():
             )
             return page, headers
 
-
     @rt("/{select}/")
     def get(select: str):
         return render_main(select)
-
 
     @rt("/csv/{node_id}/{period_slug}")
     def get(node_id: int, period_slug: str):
@@ -86,7 +84,6 @@ def main():
         path = "csvs/" + filename
         minting_node.write_csv(path)
         return FileResponse(path, filename=filename)
-
 
     @rt("/node/{node_id}")
     def get(req, node_id: int, show_empty: bool = False):
@@ -106,7 +103,9 @@ def main():
                 logging.error(f"Database locked error while accessing node {node_id}")
                 results = P("Error retrieving receipts data. Please try again.")
             else:
-                logging.error(f"Database error while accessing node {node_id}: {str(e)}")
+                logging.error(
+                    f"Database error while accessing node {node_id}: {str(e)}"
+                )
                 results = P("Error retrieving receipts data. Please try again.")
         except Exception as e:
             logging.error(f"Unexpected error while accessing node {node_id}: {str(e)}")
@@ -116,7 +115,6 @@ def main():
             return results
         else:
             return render_main("node", node_id, result=results)
-
 
     @rt("/farm/{farm_id}")
     def get(req, farm_id: int, sort_by: str = "node", show_empty: bool = False):
@@ -140,10 +138,12 @@ def main():
                     receipts_by_period = {}
                     for _, receipts in farm_receipts:
                         for receipt in receipts:
-                            receipts_by_period.setdefault(receipt.period.offset, []).append(
-                                receipt
-                            )
-                    for offset, receipts in reversed(sorted(receipts_by_period.items())):
+                            receipts_by_period.setdefault(
+                                receipt.period.offset, []
+                            ).append(receipt)
+                    for offset, receipts in reversed(
+                        sorted(receipts_by_period.items())
+                    ):
                         period = Period(offset=offset)
                         results.append(H2(f"{period.month_name} {period.year}"))
                         results.append(
@@ -158,7 +158,9 @@ def main():
                 logging.error(f"Database locked error while accessing farm {farm_id}")
                 results = P("Error retrieving receipts data. Please try again.")
             else:
-                logging.error(f"Database error while accessing farm {farm_id}: {str(e)}")
+                logging.error(
+                    f"Database error while accessing farm {farm_id}: {str(e)}"
+                )
                 results = P("Error retrieving receipts data. Please try again.")
         except Exception as e:
             logging.error(f"Unexpected error while accessing farm {farm_id}: {str(e)}")
@@ -169,7 +171,6 @@ def main():
         else:
             return render_main("farm", farm_id, show_empty, sort_by, results)
 
-
     @rt("/node/{node_id}/{period_slug}")
     def get(req, node_id: int, period_slug: str):
         details = render_details(node_id, period_slug)
@@ -179,13 +180,11 @@ def main():
         else:
             return render_main(id_input=node_id, result=details)
 
-
     def make_url(select, id_input, show_empty, sort_by):
         if select == "node":
             return f"/{select}/{id_input}?show_empty={show_empty}"
         elif select == "farm":
             return f"/{select}/{id_input}?sort_by={sort_by}&show_empty={show_empty}"
-
 
     def fetch_farm_receipts(farm_id: int) -> List[Tuple[int, list | None]]:
         with gql_lock:
@@ -923,82 +922,81 @@ def format_duration(seconds):
             days = int(days)
         return f"{days} {'day' if days == 1 else 'days'}"
 
+    # def get_contract_billing_revenue(node_id: int, period: Period) -> float:
+    #     """Query contract billing data for a node during a specific period and return total revenue."""
+    #     # First query: Get all contracts for the node
+    #     contracts_query = gql("""
+    #         query NodeContracts($nodeId: Int!) {
+    #             nodeContracts(where: {nodeID_eq: $nodeId}) {
+    #                 contractID
+    #             }
+    #         }
+    #     """)
 
-# def get_contract_billing_revenue(node_id: int, period: Period) -> float:
-#     """Query contract billing data for a node during a specific period and return total revenue."""
-#     # First query: Get all contracts for the node
-#     contracts_query = gql("""
-#         query NodeContracts($nodeId: Int!) {
-#             nodeContracts(where: {nodeID_eq: $nodeId}) {
-#                 contractID
-#             }
-#         }
-#     """)
+    #     with gql_lock:
+    #         try:
+    #             # Execute the contracts query
+    #             contracts_result = graphql.client.execute(
+    #                 contracts_query, variable_values={"nodeId": node_id}
+    #             )
 
-#     with gql_lock:
-#         try:
-#             # Execute the contracts query
-#             contracts_result = graphql.client.execute(
-#                 contracts_query, variable_values={"nodeId": node_id}
-#             )
+    #             # Extract contract IDs
+    #             contract_ids = []
+    #             if (
+    #                 "nodeContracts" in contracts_result
+    #                 and contracts_result["nodeContracts"]
+    #             ):
+    #                 contract_ids = [
+    #                     contract["contractID"]
+    #                     for contract in contracts_result["nodeContracts"]
+    #                 ]
 
-#             # Extract contract IDs
-#             contract_ids = []
-#             if (
-#                 "nodeContracts" in contracts_result
-#                 and contracts_result["nodeContracts"]
-#             ):
-#                 contract_ids = [
-#                     contract["contractID"]
-#                     for contract in contracts_result["nodeContracts"]
-#                 ]
+    #             # If no contracts found, return 0
+    #             if not contract_ids:
+    #                 return 0.0
 
-#             # If no contracts found, return 0
-#             if not contract_ids:
-#                 return 0.0
+    #             # Second query: Get bill reports for all contracts within the period
+    #             bill_reports_query = gql("""
+    #                 query ContractBilling($contractIds: [BigInt!], $timestampGt: BigInt!, $timestampLt: BigInt!) {
+    #                     contractBillReports(
+    #                         where: {
+    #                             contractID_in: $contractIds,
+    #                             timestamp_gt: $timestampGt,
+    #                             timestamp_lt: $timestampLt
+    #                         }
+    #                     ) {
+    #                         contractID
+    #                         amountBilled
+    #                     }
+    #                 }
+    #             """)
 
-#             # Second query: Get bill reports for all contracts within the period
-#             bill_reports_query = gql("""
-#                 query ContractBilling($contractIds: [BigInt!], $timestampGt: BigInt!, $timestampLt: BigInt!) {
-#                     contractBillReports(
-#                         where: {
-#                             contractID_in: $contractIds,
-#                             timestamp_gt: $timestampGt,
-#                             timestamp_lt: $timestampLt
-#                         }
-#                     ) {
-#                         contractID
-#                         amountBilled
-#                     }
-#                 }
-#             """)
+    #             # Execute the bill reports query
+    #             bill_reports_result = graphql.client.execute(
+    #                 bill_reports_query,
+    #                 variable_values={
+    #                     "contractIds": contract_ids,
+    #                     "timestampGt": str(period.start),
+    #                     "timestampLt": str(period.end),
+    #                 },
+    #             )
 
-#             # Execute the bill reports query
-#             bill_reports_result = graphql.client.execute(
-#                 bill_reports_query,
-#                 variable_values={
-#                     "contractIds": contract_ids,
-#                     "timestampGt": str(period.start),
-#                     "timestampLt": str(period.end),
-#                 },
-#             )
+    #             # Sum up all the billed amounts
+    #             total_revenue = 0.0
+    #             for report in bill_reports_result["contractBillReports"]:
+    #                 total_revenue += float(report["amountBilled"])
 
-#             # Sum up all the billed amounts
-#             total_revenue = 0.0
-#             for report in bill_reports_result["contractBillReports"]:
-#                 total_revenue += float(report["amountBilled"])
+    #             print(total_revenue)
 
-#             print(total_revenue)
-
-#             return total_revenue
-#         except Exception as e:
-#             logging.error(
-#                 f"Error querying contract billing data for node {node_id}: {str(e)}"
-#             )
-#             return 0.0
-
+    #             return total_revenue
+    #         except Exception as e:
+    #             logging.error(
+    #                 f"Error querying contract billing data for node {node_id}: {str(e)}"
+    #             )
+    #             return 0.0
 
     serve()
+
 
 if __name__ == "__main__":
     main()
