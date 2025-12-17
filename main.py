@@ -15,12 +15,14 @@ from lightdark import DarkLink, LightDarkScript, LightLink
 from receipts import STANDARD_PERIOD_DURATION, ReceiptHandler, make_node_minting_periods
 
 # Check for environment variables
-db_path = os.environ.get("DB_PATH", "receipts.db")
+receipts_db_path = os.environ.get("RECEIPTS_DB_PATH", "receipts.db")
+tfchain_db_path = os.environ.get("TFCHAIN_DB_PATH", "tfchain.db")
 # LIVE_RELOAD can be set to "1", "true", "True", etc.
 live_reload_env = os.environ.get("LIVE_RELOAD", "False").lower()
 live_reload = live_reload_env in ("1", "true", "yes")
 
-logging.info(f"Using database at: {db_path}")
+logging.info(f"Using receipts database at: {receipts_db_path}")
+logging.info(f"Using tfchain database at: {tfchain_db_path}")
 logging.info(f"Live reload enabled: {live_reload}")
 
 RECEIPTS_URL = "https://alpha.minting.tfchain.grid.tf/api/v1/"
@@ -41,7 +43,7 @@ graphql = grid3.graphql.GraphQL(graphql_url, fetch_schema=False)
 gql_lock = threading.Lock()
 app, rt = fast_app(live=live_reload)
 
-receipt_handler = ReceiptHandler(db_path=db_path)
+receipt_handler = ReceiptHandler(db_path=receipts_db_path)
 
 
 @rt("/")
@@ -810,11 +812,11 @@ def receipt_header_details():
 
 def mintinglite(node_id, period):
     # For testing without db file present
-    if not os.path.exists("tfchain.db"):
+    if not os.path.exists(tfchain_db_path):
         return None
 
     try:
-        con = sqlite3.connect("tfchain.db")
+        con = sqlite3.connect(tfchain_db_path)
     except sqlite3.OperationalError as e:
         if "database is locked" in str(e):
             logging.warning(
