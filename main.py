@@ -29,6 +29,8 @@ def main():
                        help='Enable live reload for development')
     args = parser.parse_args()
     
+    logging.info(f"Using database at: {args.db_path}")
+    
     RECEIPTS_URL = "https://alpha.minting.tfchain.grid.tf/api/v1/"
     CSV_DIR = "csvs"
 
