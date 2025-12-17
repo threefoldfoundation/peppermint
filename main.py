@@ -1,4 +1,3 @@
-import concurrent.futures
 import logging
 import sqlite3
 
@@ -14,7 +13,6 @@ from typing import List, Tuple
 import grid3.graphql
 import grid3.minting.mintingnode
 from fasthtml.common import *
-from gql import gql
 from grid3.minting.period import Period
 
 from lightdark import DarkLink, LightDarkScript, LightLink
@@ -23,8 +21,8 @@ from receipts import STANDARD_PERIOD_DURATION, ReceiptHandler, make_node_minting
 try:
     from config import LIVE_RELOAD
 except:
-    print("Error loading config file, setting live reload to True")
-    LIVE_RELOAD = True
+    print("No valid config file found, disabling live reload")
+    LIVE_RELOAD = False
 
 
 RECEIPTS_URL = "https://alpha.minting.tfchain.grid.tf/api/v1/"
@@ -115,7 +113,7 @@ def get(req, node_id: int, show_empty: bool = False):
 def get(req, farm_id: int, sort_by: str = "node", show_empty: bool = False):
     try:
         farm_receipts = fetch_farm_receipts(farm_id)
-        
+
         # Handle case where farm has no nodes
         if not farm_receipts:
             results = P(f"Farm {farm_id} has no nodes or nodes not found.")
@@ -139,8 +137,10 @@ def get(req, farm_id: int, sort_by: str = "node", show_empty: bool = False):
                 for offset, receipts in reversed(sorted(receipts_by_period.items())):
                     period = Period(offset=offset)
                     results.append(H2(f"{period.month_name} {period.year}"))
-                    results.append(render_receipt_overview(receipts, sort_by, show_empty))
-            
+                    results.append(
+                        render_receipt_overview(receipts, sort_by, show_empty)
+                    )
+
             if not results:
                 results = "No receipts found."
 
@@ -183,7 +183,7 @@ def fetch_farm_receipts(farm_id: int) -> List[Tuple[int, list | None]]:
         nodes = graphql.nodes(["nodeID"], farmID_eq=farm_id)
 
     node_ids = [node["nodeID"] for node in nodes]
-    
+
     # Simply fetch receipts from database for each node
     processed_responses = []
     for node_id in node_ids:
@@ -191,7 +191,7 @@ def fetch_farm_receipts(farm_id: int) -> List[Tuple[int, list | None]]:
         processed_responses.append(
             (node_id, make_node_minting_periods(node_id, receipt_list))
         )
-    
+
     # Sorts by node id
     return sorted(processed_responses)
 
