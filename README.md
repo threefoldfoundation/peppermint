@@ -9,8 +9,8 @@ cd peppermint
 uv venv
 uv pip install -r requirements.txt
 
-# With live-reload, changes to the code will be served automatically
-uv run main.py --live-reload
+# With live reload, changes to the code will be served automatically
+LIVE_RELOAD=True uv run main.py
 ```
 
 A link to visit the dev server will appear in your terminal.
