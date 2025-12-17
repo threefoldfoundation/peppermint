@@ -43,7 +43,10 @@ Both the receipts script and Peppermint itself can be configured to use a differ
 
 ```
 uv run receipts.py --db-path /path/to/receipts.db
-uv run main.py --db-path /path/to/receipts.db
+DB_PATH=/path/to/receipts.db uv run uvicorn main:app --host 0.0.0.0 --port 80 --workers 1
+```
+
+There doesn't seem to be a way to pass CLI args through when calling uvicorn like this, thus the use of an env var.
 
 ## Contributing
 
