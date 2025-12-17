@@ -572,9 +572,27 @@ def check_for_new_receipts(handler: ReceiptHandler, node_ids: List[int]) -> bool
     return False
 
 
+import argparse
+import os
+
 def main():
+    parser = argparse.ArgumentParser(description='Receipts daemon')
+    parser.add_argument('--db-path', type=str, 
+                       help='Path to the SQLite database file (default: receipts.db or from config.py)')
+    args = parser.parse_args()
+    
+    # Determine database path
+    db_path = args.db_path
+    if db_path is None:
+        # Try to import from config
+        try:
+            from config import RECEIPTS_DB_PATH
+            db_path = RECEIPTS_DB_PATH
+        except ImportError:
+            db_path = "receipts.db"
+    
     # Create handler - this will create and initialize the database if it doesn't exist
-    handler = ReceiptHandler()
+    handler = ReceiptHandler(db_path=db_path)
     node_ids = get_all_node_ids()
 
     # Flag to control the daemon loop

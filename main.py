@@ -19,10 +19,15 @@ from lightdark import DarkLink, LightDarkScript, LightLink
 from receipts import STANDARD_PERIOD_DURATION, ReceiptHandler, make_node_minting_periods
 
 try:
-    from config import LIVE_RELOAD
-except:
+    from config import LIVE_RELOAD, RECEIPTS_DB_PATH
+except ImportError:
     print("No valid config file found, disabling live reload")
     LIVE_RELOAD = False
+    RECEIPTS_DB_PATH = "receipts.db"
+except:
+    print("Error reading config file, using defaults")
+    LIVE_RELOAD = False
+    RECEIPTS_DB_PATH = "receipts.db"
 
 
 RECEIPTS_URL = "https://alpha.minting.tfchain.grid.tf/api/v1/"
@@ -44,7 +49,7 @@ graphql = grid3.graphql.GraphQL(graphql_url, fetch_schema=False)
 gql_lock = threading.Lock()
 app, rt = fast_app(live=LIVE_RELOAD)
 
-receipt_handler = ReceiptHandler()
+receipt_handler = ReceiptHandler(db_path=RECEIPTS_DB_PATH)
 
 
 @rt("/")
