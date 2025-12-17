@@ -1,10 +1,10 @@
 import logging
 import sqlite3
 
-logging.basicConfig(
-    level=logging.WARNING, format="%(asctime)s - %(levelname)s - %(message)s"
-)
+import argparse
+import logging
 import os
+import sqlite3
 import threading
 import time
 from datetime import datetime, timedelta
@@ -18,187 +18,185 @@ from grid3.minting.period import Period
 from lightdark import DarkLink, LightDarkScript, LightLink
 from receipts import STANDARD_PERIOD_DURATION, ReceiptHandler, make_node_minting_periods
 
-try:
-    from config import LIVE_RELOAD, RECEIPTS_DB_PATH
-except ImportError:
-    print("No valid config file found, disabling live reload")
-    LIVE_RELOAD = False
-    RECEIPTS_DB_PATH = "receipts.db"
-except:
-    print("Error reading config file, using defaults")
-    LIVE_RELOAD = False
-    RECEIPTS_DB_PATH = "receipts.db"
+import argparse
 
 
-RECEIPTS_URL = "https://alpha.minting.tfchain.grid.tf/api/v1/"
-CSV_DIR = "csvs"
+def main():
+    parser = argparse.ArgumentParser(description='Peppermint web application')
+    parser.add_argument('--db-path', type=str, default='receipts.db',
+                       help='Path to the SQLite database file (default: receipts.db)')
+    parser.add_argument('--live-reload', action='store_true',
+                       help='Enable live reload for development')
+    args = parser.parse_args()
+    
+    RECEIPTS_URL = "https://alpha.minting.tfchain.grid.tf/api/v1/"
+    CSV_DIR = "csvs"
 
-# Technically our notion of when minting periods start and end should be
-# identical to the minting code, but just in case, we use a wiggle factor to
-# smooth out any small deviations
-WIGGLE = 10
-TFT_DIVISOR = 1e7  # Number of decimal places, as used on tfchain
+    # Technically our notion of when minting periods start and end should be
+    # identical to the minting code, but just in case, we use a wiggle factor to
+    # smooth out any small deviations
+    WIGGLE = 10
+    TFT_DIVISOR = 1e7  # Number of decimal places, as used on tfchain
+
+    os.makedirs(CSV_DIR, exist_ok=True)
+
+    graphql_url = "https://graphql.grid.tf/graphql"
+    graphql = grid3.graphql.GraphQL(graphql_url, fetch_schema=False)
+    # We can run into some trouble with multiple threads trying to use gql at the
+    # same time. Bit primitive, but we just lock it for now
+    gql_lock = threading.Lock()
+    app, rt = fast_app(live=args.live_reload)
+
+    receipt_handler = ReceiptHandler(db_path=args.db_path)
 
 
-os.makedirs(CSV_DIR, exist_ok=True)
+    @rt("/")
+    def get(
+        select: str = "node",
+        id_input: int = None,
+        sort_by: str = "node",
+        show_empty: bool = False,
+    ):
+        if not id_input:
+            return render_main(select)
+        else:
+            page = render_main(select, id_input, show_empty, sort_by, loading=True)
+            headers = HtmxResponseHeaders(
+                push_url=make_url(select, id_input, show_empty, sort_by)
+            )
+            return page, headers
 
-graphql_url = "https://graphql.grid.tf/graphql"
-graphql = grid3.graphql.GraphQL(graphql_url, fetch_schema=False)
-# We can run into some trouble with multiple threads trying to use gql at the
-# same time. Bit primitive, but we just lock it for now
-gql_lock = threading.Lock()
-app, rt = fast_app(live=LIVE_RELOAD)
 
-receipt_handler = ReceiptHandler(db_path=RECEIPTS_DB_PATH)
-
-
-@rt("/")
-def get(
-    select: str = "node",
-    id_input: int = None,
-    sort_by: str = "node",
-    show_empty: bool = False,
-):
-    if not id_input:
+    @rt("/{select}/")
+    def get(select: str):
         return render_main(select)
-    else:
-        page = render_main(select, id_input, show_empty, sort_by, loading=True)
-        headers = HtmxResponseHeaders(
-            push_url=make_url(select, id_input, show_empty, sort_by)
-        )
-        return page, headers
 
 
-@rt("/{select}/")
-def get(select: str):
-    return render_main(select)
+    @rt("/csv/{node_id}/{period_slug}")
+    def get(node_id: int, period_slug: str):
+        period = slug_to_period(period_slug)
+        minting_node = mintinglite(node_id, period)
+        filename = f"node{minting_node.id}.csv"
+        path = "csvs/" + filename
+        minting_node.write_csv(path)
+        return FileResponse(path, filename=filename)
 
 
-@rt("/csv/{node_id}/{period_slug}")
-def get(node_id: int, period_slug: str):
-    period = slug_to_period(period_slug)
-    minting_node = mintinglite(node_id, period)
-    filename = f"node{minting_node.id}.csv"
-    path = "csvs/" + filename
-    minting_node.write_csv(path)
-    return FileResponse(path, filename=filename)
-
-
-@rt("/node/{node_id}")
-def get(req, node_id: int, show_empty: bool = False):
-    try:
-        receipts = make_node_minting_periods(
-            node_id, receipt_handler.get_node_receipts(node_id)
-        )
-        if not receipts:
-            results = "No receipts found."
-        else:
-            results = [
-                H2(f"Node {node_id}"),
-                render_receipt_overview(receipts, "node", show_empty),
-            ]
-    except sqlite3.OperationalError as e:
-        if "database is locked" in str(e):
-            logging.error(f"Database locked error while accessing node {node_id}")
+    @rt("/node/{node_id}")
+    def get(req, node_id: int, show_empty: bool = False):
+        try:
+            receipts = make_node_minting_periods(
+                node_id, receipt_handler.get_node_receipts(node_id)
+            )
+            if not receipts:
+                results = "No receipts found."
+            else:
+                results = [
+                    H2(f"Node {node_id}"),
+                    render_receipt_overview(receipts, "node", show_empty),
+                ]
+        except sqlite3.OperationalError as e:
+            if "database is locked" in str(e):
+                logging.error(f"Database locked error while accessing node {node_id}")
+                results = P("Error retrieving receipts data. Please try again.")
+            else:
+                logging.error(f"Database error while accessing node {node_id}: {str(e)}")
+                results = P("Error retrieving receipts data. Please try again.")
+        except Exception as e:
+            logging.error(f"Unexpected error while accessing node {node_id}: {str(e)}")
             results = P("Error retrieving receipts data. Please try again.")
+
+        if "hx-request" in req.headers:
+            return results
         else:
-            logging.error(f"Database error while accessing node {node_id}: {str(e)}")
-            results = P("Error retrieving receipts data. Please try again.")
-    except Exception as e:
-        logging.error(f"Unexpected error while accessing node {node_id}: {str(e)}")
-        results = P("Error retrieving receipts data. Please try again.")
-
-    if "hx-request" in req.headers:
-        return results
-    else:
-        return render_main("node", node_id, result=results)
+            return render_main("node", node_id, result=results)
 
 
-@rt("/farm/{farm_id}")
-def get(req, farm_id: int, sort_by: str = "node", show_empty: bool = False):
-    try:
-        farm_receipts = fetch_farm_receipts(farm_id)
+    @rt("/farm/{farm_id}")
+    def get(req, farm_id: int, sort_by: str = "node", show_empty: bool = False):
+        try:
+            farm_receipts = fetch_farm_receipts(farm_id)
 
-        # Handle case where farm has no nodes
-        if not farm_receipts:
-            results = P(f"Farm {farm_id} has no nodes or nodes not found.")
-        else:
-            results = []
-            if sort_by == "node":
-                for node_id, receipts in farm_receipts:
-                    if receipts:
-                        results.append(H2(f"Node {node_id}"))
+            # Handle case where farm has no nodes
+            if not farm_receipts:
+                results = P(f"Farm {farm_id} has no nodes or nodes not found.")
+            else:
+                results = []
+                if sort_by == "node":
+                    for node_id, receipts in farm_receipts:
+                        if receipts:
+                            results.append(H2(f"Node {node_id}"))
+                            results.append(
+                                render_receipt_overview(receipts, sort_by, show_empty)
+                            )
+
+                elif sort_by == "period":
+                    receipts_by_period = {}
+                    for _, receipts in farm_receipts:
+                        for receipt in receipts:
+                            receipts_by_period.setdefault(receipt.period.offset, []).append(
+                                receipt
+                            )
+                    for offset, receipts in reversed(sorted(receipts_by_period.items())):
+                        period = Period(offset=offset)
+                        results.append(H2(f"{period.month_name} {period.year}"))
                         results.append(
                             render_receipt_overview(receipts, sort_by, show_empty)
                         )
 
-            elif sort_by == "period":
-                receipts_by_period = {}
-                for _, receipts in farm_receipts:
-                    for receipt in receipts:
-                        receipts_by_period.setdefault(receipt.period.offset, []).append(
-                            receipt
-                        )
-                for offset, receipts in reversed(sorted(receipts_by_period.items())):
-                    period = Period(offset=offset)
-                    results.append(H2(f"{period.month_name} {period.year}"))
-                    results.append(
-                        render_receipt_overview(receipts, sort_by, show_empty)
-                    )
+                if not results:
+                    results = "No receipts found."
 
-            if not results:
-                results = "No receipts found."
-
-    except sqlite3.OperationalError as e:
-        if "database is locked" in str(e):
-            logging.error(f"Database locked error while accessing farm {farm_id}")
+        except sqlite3.OperationalError as e:
+            if "database is locked" in str(e):
+                logging.error(f"Database locked error while accessing farm {farm_id}")
+                results = P("Error retrieving receipts data. Please try again.")
+            else:
+                logging.error(f"Database error while accessing farm {farm_id}: {str(e)}")
+                results = P("Error retrieving receipts data. Please try again.")
+        except Exception as e:
+            logging.error(f"Unexpected error while accessing farm {farm_id}: {str(e)}")
             results = P("Error retrieving receipts data. Please try again.")
+
+        if "hx-request" in req.headers:
+            return results
         else:
-            logging.error(f"Database error while accessing farm {farm_id}: {str(e)}")
-            results = P("Error retrieving receipts data. Please try again.")
-    except Exception as e:
-        logging.error(f"Unexpected error while accessing farm {farm_id}: {str(e)}")
-        results = P("Error retrieving receipts data. Please try again.")
-
-    if "hx-request" in req.headers:
-        return results
-    else:
-        return render_main("farm", farm_id, show_empty, sort_by, results)
+            return render_main("farm", farm_id, show_empty, sort_by, results)
 
 
-@rt("/node/{node_id}/{period_slug}")
-def get(req, node_id: int, period_slug: str):
-    details = render_details(node_id, period_slug)
+    @rt("/node/{node_id}/{period_slug}")
+    def get(req, node_id: int, period_slug: str):
+        details = render_details(node_id, period_slug)
 
-    if "hx-request" in req.headers:
-        return details
-    else:
-        return render_main(id_input=node_id, result=details)
-
-
-def make_url(select, id_input, show_empty, sort_by):
-    if select == "node":
-        return f"/{select}/{id_input}?show_empty={show_empty}"
-    elif select == "farm":
-        return f"/{select}/{id_input}?sort_by={sort_by}&show_empty={show_empty}"
+        if "hx-request" in req.headers:
+            return details
+        else:
+            return render_main(id_input=node_id, result=details)
 
 
-def fetch_farm_receipts(farm_id: int) -> List[Tuple[int, list | None]]:
-    with gql_lock:
-        nodes = graphql.nodes(["nodeID"], farmID_eq=farm_id)
+    def make_url(select, id_input, show_empty, sort_by):
+        if select == "node":
+            return f"/{select}/{id_input}?show_empty={show_empty}"
+        elif select == "farm":
+            return f"/{select}/{id_input}?sort_by={sort_by}&show_empty={show_empty}"
 
-    node_ids = [node["nodeID"] for node in nodes]
 
-    # Simply fetch receipts from database for each node
-    processed_responses = []
-    for node_id in node_ids:
-        receipt_list = receipt_handler.get_node_receipts(node_id)
-        processed_responses.append(
-            (node_id, make_node_minting_periods(node_id, receipt_list))
-        )
+    def fetch_farm_receipts(farm_id: int) -> List[Tuple[int, list | None]]:
+        with gql_lock:
+            nodes = graphql.nodes(["nodeID"], farmID_eq=farm_id)
 
-    # Sorts by node id
-    return sorted(processed_responses)
+        node_ids = [node["nodeID"] for node in nodes]
+
+        # Simply fetch receipts from database for each node
+        processed_responses = []
+        for node_id in node_ids:
+            receipt_list = receipt_handler.get_node_receipts(node_id)
+            processed_responses.append(
+                (node_id, make_node_minting_periods(node_id, receipt_list))
+            )
+
+        # Sorts by node id
+        return sorted(processed_responses)
 
 
 def render_main(
@@ -994,4 +992,7 @@ def format_duration(seconds):
 #             return 0.0
 
 
-serve()
+    serve()
+
+if __name__ == "__main__":
+    main()
