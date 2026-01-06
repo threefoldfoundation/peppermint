@@ -156,7 +156,7 @@ class ReceiptHandler:
             return [self.process_receipt(r) for r in response.json()]
         except requests.RequestException as e:
             # Only log non-404 errors
-            if hasattr(e.response, 'status_code') and e.response.status_code == 404:
+            if hasattr(e.response, "status_code") and e.response.status_code == 404:
                 return None
             print(f"Failed to fetch receipts for node {node_id}: {str(e)}")
             return []
@@ -239,16 +239,18 @@ def fetch_and_process_node(handler: ReceiptHandler, node_id: int) -> List[Dict] 
     Returns None if node has no receipts (404), otherwise returns list of receipts.
     """
     receipts = handler.fetch_node_receipts(node_id)
-    
+
     if receipts is None:
         # Node has no receipts - this is normal
         return None
-    
+
     for receipt in receipts:
         handler.save_receipt(receipt)
 
     if receipts:
-        last_period_end = max([receipt["period"]["end"] for receipt in receipts], default=0)
+        last_period_end = max(
+            [receipt["period"]["end"] for receipt in receipts], default=0
+        )
         if last_period_end != 0:
             # Use direct SQL for daemon operations
             with handler.get_connection() as conn:
@@ -420,7 +422,11 @@ def make_node_minting_periods(
                 NodeMintingPeriod.from_receipts(receipts.popitem()[1])
             )
 
-    # There are two scenarios, since minting and the publishing of receipts takes at least a few days after each period ends. Either the receipts for the last completed period are published or they are not. If they are not, then there are two periods, the last one and the current one, for which no receipts are available. Otherwise, it's only the current period. From there, we must also account for the fact that the node might not have existed last period. So if last period's receipts haven't been published, and this node has no receipts, we need to query the node creation time
+    # Receipts are generally published sometime during the next minting period,
+    # however it can take longer and there might be multiple past periods where
+    # no receipt is available yet. If last period's receipts haven't been
+    # published, and this node has no receipts, we need to query the node
+    # creation time to see how far back to go
 
     this_period = Period()
     previous_period = Period(offset=this_period.offset - 1)
@@ -431,10 +437,16 @@ def make_node_minting_periods(
     if last_end < previous_period.end:
         if len(period_receipts) > 1:
             # Node has receipt history, so it must have existed before the
-            # previous period
-            period_receipts.append(
-                NodeMintingPeriod.for_unpublished_period(node_id, previous_period)
-            )
+            # previous period. Fill in all unpublished periods from last receipt to now
+            last_period = Period(last_end - 1)
+            current_offset = previous_period.offset
+            while current_offset > last_period.offset:
+                period_receipts.append(
+                    NodeMintingPeriod.for_unpublished_period(
+                        node_id, Period(offset=current_offset)
+                    )
+                )
+                current_offset -= 1
         else:
             # No receipt history, so we need to check if this node existed at
             # any time during the previous period. TODO: the node creation time
@@ -442,9 +454,15 @@ def make_node_minting_periods(
             # once and cache
             node = requests.get(f"https://gridproxy.grid.tf/nodes/{node_id}").json()
             if node["created"] < previous_period.end:
-                period_receipts.append(
-                    NodeMintingPeriod.for_unpublished_period(node_id, previous_period)
-                )
+                last_period = Period(last_end - 1)
+                current_offset = previous_period.offset
+                while current_offset > last_period.offset:
+                    period_receipts.append(
+                        NodeMintingPeriod.for_unpublished_period(
+                            node_id, Period(offset=current_offset)
+                        )
+                    )
+                    current_offset -= 1
 
     return period_receipts
 
@@ -473,64 +491,67 @@ def scrape_nodes(handler: ReceiptHandler, node_ids: List[int]):
     total_nodes = len(node_ids)
     nodes_without_receipts = []  # Track nodes that return 404
     nodes_with_errors = []  # Track nodes with errors
-    
+
     with concurrent.futures.ThreadPoolExecutor(max_workers=SCRAPER_WORKERS) as executor:
         # Submit all tasks
-        futures = {executor.submit(scrape_node, handler, node_id): node_id for node_id in node_ids}
-        
+        futures = {
+            executor.submit(scrape_node, handler, node_id): node_id
+            for node_id in node_ids
+        }
+
         # Process as they complete with progress updates
         for future in concurrent.futures.as_completed(futures):
             node_id = futures[future]
             try:
                 result = future.result()
                 results.append(result)
-                
+
                 # Track 404 nodes and error nodes
                 if result is None:
                     nodes_without_receipts.append(node_id)
                 elif result is False:
                     nodes_with_errors.append(node_id)
-                    
+
             except Exception as e:
                 print(f"Unexpected error processing node {node_id}: {e}")
                 results.append(False)
                 nodes_with_errors.append(node_id)
-            
+
             completed += 1
-            
+
             # Report progress every 10% or every 100 nodes, whichever is smaller
             report_interval = max(1, min(total_nodes // 10, 100))
             if completed % report_interval == 0 or completed == total_nodes:
                 percentage = (completed / total_nodes) * 100
                 print(f"Progress: {completed}/{total_nodes} nodes ({percentage:.1f}%)")
-    
+
     # Log summary
     successful_with_receipts = sum(1 for r in results if r is True)
     successful_without_receipts = len(nodes_without_receipts)
     failed_count = len(nodes_with_errors)
-    
-    print(f"\nScrape completed:")
+
+    print("\nScrape completed:")
     print(f"  - {successful_with_receipts} nodes with receipts")
     print(f"  - {successful_without_receipts} nodes without receipts (404)")
     print(f"  - {failed_count} nodes failed with errors")
-    
+
     # Display nodes without receipts in batches
     if nodes_without_receipts:
         print(f"\nNodes without receipts ({len(nodes_without_receipts)} total):")
         # Display in batches of 20 for readability
         batch_size = 20
         for i in range(0, len(nodes_without_receipts), batch_size):
-            batch = nodes_without_receipts[i:i + batch_size]
+            batch = nodes_without_receipts[i : i + batch_size]
             print(f"  {', '.join(map(str, batch))}")
-    
+
     # Display nodes with errors if any
     if nodes_with_errors:
         print(f"\nNodes with errors ({len(nodes_with_errors)} total):")
         batch_size = 20
         for i in range(0, len(nodes_with_errors), batch_size):
-            batch = nodes_with_errors[i:i + batch_size]
+            batch = nodes_with_errors[i : i + batch_size]
             print(f"  {', '.join(map(str, batch))}")
-    
+
     return results
 
 
@@ -574,14 +595,19 @@ def check_for_new_receipts(handler: ReceiptHandler, node_ids: List[int]) -> bool
 
 import argparse
 
+
 def main():
-    parser = argparse.ArgumentParser(description='Receipts daemon')
-    parser.add_argument('--db-path', type=str, default='receipts.db',
-                       help='Path to the SQLite database file (default: receipts.db)')
+    parser = argparse.ArgumentParser(description="Receipts daemon")
+    parser.add_argument(
+        "--db-path",
+        type=str,
+        default="receipts.db",
+        help="Path to the SQLite database file (default: receipts.db)",
+    )
     args = parser.parse_args()
-    
+
     db_path = args.db_path
-    
+
     # Create handler - this will create and initialize the database if it doesn't exist
     handler = ReceiptHandler(db_path=db_path)
     node_ids = get_all_node_ids()
